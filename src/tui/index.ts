@@ -33,7 +33,7 @@ class KoshiEditor extends Editor {
   }
 }
 
-export function startTui(port = 3100): void {
+export function startTui(port = 3200): void {
   const session = 'tui'
 
   let ws: WebSocket | null = null
@@ -157,17 +157,25 @@ export function startTui(port = 3100): void {
       return
     }
     const now = Date.now()
-    if (now - lastCtrlCAt < 1000) {
+    if (now - lastCtrlCAt < 1500) {
       cleanup()
       process.exit(0)
     }
     lastCtrlCAt = now
+    chatLog.addSystem('Press Ctrl+C again to exit')
+    tui.requestRender()
   }
 
   editor.onCtrlD = () => {
     cleanup()
     process.exit(0)
   }
+
+  // Backup: catch SIGINT directly in case pi-tui doesn't pass it
+  process.on('SIGINT', () => {
+    cleanup()
+    process.exit(0)
+  })
 
   // --- WebSocket ---
   const cleanup = () => {
