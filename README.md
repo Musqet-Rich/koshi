@@ -7,8 +7,8 @@ A skeleton framework for agentic assistants. Built for Claude, not model-agnosti
 ```bash
 git clone https://github.com/Musqet-Rich/koshi.git
 cd koshi
-npm install
-npm run build
+pnpm install
+pnpm build
 ```
 
 ## Configure
@@ -48,11 +48,11 @@ node dist/cli.js unset <key>          # remove a secret
 ## Development
 
 ```bash
-npm run check      # typecheck + lint (must pass before committing)
-npm run typecheck  # tsc only
-npm run lint       # biome only
-npm run lint:fix   # biome auto-fix
-npm run dev        # run daemon with tsx (no build step)
+pnpm check      # typecheck + lint (must pass before committing)
+pnpm typecheck  # tsc only
+pnpm lint       # biome only
+pnpm lint:fix   # biome auto-fix
+pnpm dev        # run daemon with tsx (no build step)
 ```
 
 ## Architecture
