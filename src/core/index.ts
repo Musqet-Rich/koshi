@@ -131,6 +131,22 @@ export async function main(): Promise<void> {
   }
 
   // 9. Initialize agent manager
+  const notifyUser = async (message: string, channels?: string[]): Promise<string> => {
+    const targets = channels
+      ? channels.map((name) => channelMap.get(name) ?? channelMap.get(`@koshi/${name}`)).filter(Boolean)
+      : [...channelMap.values()]
+
+    if (targets.length === 0) return 'No channels available'
+
+    const results = await Promise.allSettled(
+      targets.map((ch) => ch!.send('tui', { content: `🔔 ${message}`, streaming: false })),
+    )
+
+    const sent = results.filter((r) => r.status === 'fulfilled').length
+    const failed = results.filter((r) => r.status === 'rejected').length
+    return failed > 0 ? `Notified ${sent} channel(s), ${failed} failed` : `Notified ${sent} channel(s)`
+  }
+
   const agentManager = createAgentManager({
     config,
     getModel,
@@ -138,6 +154,7 @@ export async function main(): Promise<void> {
     promptBuilder,
     memory,
     db,
+    notify: notifyUser,
   })
 
   // 10. Start router

@@ -75,12 +75,32 @@ const SUBAGENT_TOOLS: Tool[] = [
       required: ['query'],
     },
   },
+  {
+    name: 'notify',
+    description:
+      'Send a notification to the user. Use for reminders, alerts, or when you need to proactively reach the user. Without channels specified, sends to all connected channels.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        message: { type: 'string', description: 'Message to send to the user' },
+        channels: {
+          type: 'array',
+          items: { type: 'string' },
+          description: 'Optional list of channel names to notify (e.g. ["tui", "whatsapp"]). Omit for all channels.',
+        },
+      },
+      required: ['message'],
+    },
+  },
 ]
+
+type NotifyFn = (message: string, channels?: string[]) => Promise<string>
 
 async function executeSubagentTool(
   tc: ToolCall,
   memory: ReturnType<typeof createMemory>,
   workspacePath: string,
+  notify?: NotifyFn,
 ): Promise<string> {
   switch (tc.name) {
     case 'exec': {
@@ -140,6 +160,12 @@ async function executeSubagentTool(
       if (results.length === 0) return 'No memories found.'
       return results.map((r) => `[id:${r.id}] ${r.content}${r.tags ? ` (tags: ${r.tags})` : ''}`).join('\n')
     }
+    case 'notify': {
+      const message = tc.input.message as string
+      const channels = tc.input.channels as string[] | undefined
+      if (!notify) return 'Notify not available'
+      return notify(message, channels)
+    }
     default:
       return `Unknown tool: ${tc.name}`
   }
@@ -161,6 +187,7 @@ export function createAgentManager(opts: {
   promptBuilder: ReturnType<typeof createPromptBuilder>
   memory: ReturnType<typeof createMemory>
   db: Database.Database
+  notify?: NotifyFn
 }) {
   const { config, getModel, sessionManager, promptBuilder, memory } = opts
   const running = new Map<string, RunningAgent>()
@@ -270,7 +297,7 @@ export function createAgentManager(opts: {
 
           // Execute tools and add results
           for (const tc of response.toolCalls) {
-            const result = await executeSubagentTool(tc, memory, workspacePath)
+            const result = await executeSubagentTool(tc, memory, workspacePath, opts.notify)
             log.info('Sub-agent tool result', {
               runId: agentRunId.slice(0, 8),
               tool: tc.name,
