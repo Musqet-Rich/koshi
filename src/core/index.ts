@@ -15,6 +15,8 @@ import { createPromptBuilder } from './prompt.js'
 import { createTaskManager } from './tasks.js'
 import { createAgentManager } from './agents.js'
 import type { KoshiContext, ModelPlugin, ChannelPlugin } from '../types.js'
+import { registerWebSocket, setTuiContext } from './ws.js'
+import { createMainLoop } from './main-loop.js'
 
 const log = createLogger('core')
 
@@ -80,6 +82,7 @@ export async function main(): Promise<void> {
   }
 
   // 7. Load plugins
+  const channelMap = new Map<string, ChannelPlugin>()
   try {
     const plugins = await loadPlugins(config, context)
     log.info(`Loaded ${plugins.length} plugin(s)`)
@@ -89,6 +92,10 @@ export async function main(): Promise<void> {
       const ch = plugin as unknown as ChannelPlugin
       if (typeof ch.connect === 'function' && typeof ch.send === 'function') {
         router.registerChannel(plugin.name, ch)
+        channelMap.set(plugin.name, ch)
+        // Also map short channel names (e.g. 'tui' for '@koshi/tui')
+        const shortName = plugin.name.replace(/^@koshi\//, '')
+        channelMap.set(shortName, ch)
 
         // Wire incoming messages to buffer
         ch.onMessage = (msg) => {
@@ -135,13 +142,29 @@ export async function main(): Promise<void> {
   router.start()
   log.info('Router started', { batchWindowMs: config.buffer.batchWindowMs })
 
+  // 10b. Start main agent loop
+  const mainLoop = createMainLoop({
+    config,
+    router,
+    getModel,
+    sessionManager,
+    promptBuilder,
+    memory,
+    getChannel: (name: string) => channelMap.get(name),
+  })
+  mainLoop.start()
+
   // 11. Buffer cleanup interval (daily)
   const cleanupTimer = setInterval(() => {
     const cleaned = buffer.cleanup(config.buffer.retentionDays)
     if (cleaned > 0) log.info(`Buffer cleanup: removed ${cleaned} old messages`)
   }, 86400000)
 
-  // 12. Start Fastify
+  // 12. Register WebSocket
+  setTuiContext(context)
+  await registerWebSocket(fastify, config)
+
+  // 13. Start Fastify
   const host = '0.0.0.0'
   const port = 3100
   try {
@@ -152,10 +175,11 @@ export async function main(): Promise<void> {
     process.exit(1)
   }
 
-  // 13. Graceful shutdown
+  // 14. Graceful shutdown
   const shutdown = async (signal: string) => {
     log.info(`Received ${signal}, shutting down...`)
     clearInterval(cleanupTimer)
+    mainLoop.stop()
     router.stop()
     try {
       await fastify.close()

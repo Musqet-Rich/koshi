@@ -8,7 +8,9 @@
     "rootDir": "src/",
     "esModuleInterop": true,
     "skipLibCheck": true,
-    "declaration": true
+    "declaration": true,
+    "jsx": "react-jsx"
   },
-  "include": ["src/**/*"]
+  "include": ["src/**/*"],
+  "exclude": ["src/tui/**/*", "src/cli.ts"]
 }

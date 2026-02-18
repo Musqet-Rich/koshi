@@ -115,6 +115,7 @@ export interface MessageBatch {
 
 export interface OutgoingMessage {
   content: string
+  streaming?: boolean
   metadata?: Record<string, unknown>
 }
 
@@ -235,7 +236,7 @@ export interface Session {
 }
 
 export interface SessionMessage {
-  role: 'user' | 'assistant' | 'tool'
+  role: 'system' | 'user' | 'assistant' | 'tool'
   content: string
   toolCalls?: ToolCall[]
   createdAt?: string

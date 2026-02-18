@@ -23,6 +23,7 @@ Usage: koshi <command>
 
 Commands:
   start       Start the Koshi daemon
+  tui         Open the terminal UI
 
 Options:
   --version   Show version
@@ -45,6 +46,11 @@ if (args.includes('--help') || args.includes('-h') || !command) {
 if (command === 'start') {
   const { main } = await import('./core/index.js')
   await main()
+} else if (command === 'tui') {
+  const portArg = args[1] ?? '3000'
+  const port = parseInt(portArg, 10)
+  const { startTui } = await import('./tui/index.js')
+  startTui(port)
 } else {
   console.error(`Unknown command: ${command}`)
   printHelp()
