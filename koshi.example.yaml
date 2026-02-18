@@ -15,7 +15,7 @@ agent:
 
 plugins:
   - name: "@koshi/anthropic"
-    apiKey: ${ANTHROPIC_API_KEY}  # set env var or replace inline
+    apiKey: ${secrets.anthropic.apiKey}  # run: koshi set anthropic.apiKey sk-ant-...
   - name: "@koshi/tui"
 
 routes: []

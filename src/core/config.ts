@@ -2,13 +2,26 @@ import { readFileSync } from 'node:fs'
 import { resolve } from 'node:path'
 import { parse } from 'yaml'
 import type { KoshiConfig } from '../types.js'
+import { getSecret, loadSecrets } from './secrets.js'
 
 /**
- * Interpolate ${VAR_NAME} patterns with process.env values.
- * Throws if a referenced env var is not set.
+ * Interpolate ${VAR_NAME} and ${secrets.x.y} patterns.
+ * Secrets are resolved from ~/.config/koshi/secrets.yaml.
+ * Remaining ${...} patterns are resolved from process.env.
  */
-function interpolateEnv(raw: string): string {
+function interpolateVars(raw: string): string {
+  // Load secrets once for this interpolation pass
+  loadSecrets()
   return raw.replace(/\$\{([^}]+)\}/g, (_match, varName) => {
+    // Check if it's a secrets reference
+    if (varName.startsWith('secrets.')) {
+      const dotPath = varName.slice('secrets.'.length)
+      const secret = getSecret(dotPath)
+      if (secret === undefined) {
+        throw new Error(`Secret "${dotPath}" is referenced in config but not found in secrets.yaml`)
+      }
+      return String(secret)
+    }
     const value = process.env[varName]
     if (value === undefined) {
       throw new Error(`Environment variable "${varName}" is referenced in config but not set`)
@@ -31,8 +44,8 @@ export function loadConfig(path?: string): KoshiConfig {
     throw new Error(`Failed to read config file at ${configPath}: ${err instanceof Error ? err.message : err}`)
   }
 
-  // Env var interpolation before YAML parsing
-  const interpolated = interpolateEnv(raw)
+  // Variable interpolation (env vars + secrets) before YAML parsing
+  const interpolated = interpolateVars(raw)
   const doc = parse(interpolated)
 
   if (!doc || typeof doc !== 'object') {
