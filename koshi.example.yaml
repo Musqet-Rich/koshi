@@ -1,132 +1,37 @@
-# ─── Koshi Configuration ─────────────────────────────────────────────────────
-# Full reference config. Copy to koshi.yaml and customise.
-# Environment variables are interpolated: ${VAR_NAME}
-
-# Instance name (default: "koshi")
-name: koshi
-
-# Log level: debug | info | warn | error (default: "info")
-logLevel: info
-
-# Data directory for SQLite DB and blobs (default: "./data")
+name: koshi-dev
 dataPath: ./data
-
-# ─── Identity ────────────────────────────────────────────────────────────────
 
 identity:
   soul: |
-    You are Koshi. Calm, direct, dry wit.
-    You help the user by routing tasks, managing memory, and coordinating agents.
-
-# ─── Models ──────────────────────────────────────────────────────────────────
-# Define named models here, reference them by name everywhere else.
-# At least one model is required.
+    You are Koshi (骨子), a minimal AI assistant. Be direct and helpful.
 
 models:
-  main:
+  claude:
     plugin: "@koshi/anthropic"
     model: claude-sonnet-4-20250514
-    apiKey: ${ANTHROPIC_API_KEY}
-  opus:
-    plugin: "@koshi/anthropic"
-    model: claude-opus-4-20250514
-    apiKey: ${ANTHROPIC_API_KEY}
-  local:
-    plugin: "@koshi/ollama"
-    model: qwen-coder-32b
-    endpoint: http://localhost:11434
-
-# ─── Agent ───────────────────────────────────────────────────────────────────
-# Main agent thread configuration.
 
 agent:
-  model: main                   # Must reference a named model above
-
-# ─── Plugins ─────────────────────────────────────────────────────────────────
-# List of plugins to load. Each gets its own config block.
+  model: claude
 
 plugins:
   - name: "@koshi/anthropic"
-    apiKey: ${ANTHROPIC_API_KEY}
-  - name: "@koshi/nostr"
-    relay: wss://relay.example.com
-    nsec: ${NOSTR_NSEC}
-  - name: "@koshi/telegram"
-    token: ${TELEGRAM_TOKEN}
+    apiKey: ${ANTHROPIC_API_KEY}  # set env var or replace inline
+  - name: "@koshi/tui"
 
-# ─── Routes ──────────────────────────────────────────────────────────────────
-# Pattern-matching rules for incoming messages.
-# Evaluated in order — first match wins.
+routes: []
 
-routes:
-  - match:
-      channel: github-webhooks
-      event: pull_request
-      action: opened
-    action:
-      spawn:
-        template: reviewer
-        task: "Review PR #{{number}}: {{title}}"
-
-  - match:
-      channel: telegram
-      from: "*"
-    action:
-      forward: main-agent
-
-# ─── Agent Templates ─────────────────────────────────────────────────────────
-# Reusable sub-agent configurations.
-
-templates:
-  coder:
-    tools: [exec, files]
-    model: local
-    timeout: 300
-  researcher:
-    tools: [web, files]
-    model: main
-    timeout: 120
-  reviewer:
-    tools: [exec, files, web]
-    model: opus
-    timeout: 300
-
-# ─── Buffer ──────────────────────────────────────────────────────────────────
-# Message buffer settings.
+templates: {}
 
 buffer:
-  retentionDays: 7              # How long to keep buffered messages (default: 7)
-  batchWindowMs: 500            # Batching window in ms (default: 500)
-
-# ─── Memory ──────────────────────────────────────────────────────────────────
+  retentionDays: 7
+  batchWindowMs: 500
 
 memory:
-  backend: sqlite               # Memory backend (default: "sqlite")
-  # reinforceWeight: 1.0
-  # demoteWeight: 0.5
-  # maxSize: "100MB"
-  # maxEntries: 10000
-  # prunePercent: 20
-
-# ─── Sessions ────────────────────────────────────────────────────────────────
+  backend: sqlite
 
 sessions:
-  maxMessages: 200              # Per session, oldest pruned (default: 200)
-  # maxTokens: 100000           # Alternative: cap by token count
+  maxMessages: 100
 
-# ─── Agents ──────────────────────────────────────────────────────────────────
+cron: []
 
-agents:
-  maxConcurrent: 5              # Max concurrent sub-agents
-  defaultTimeout: 300           # Default timeout in seconds
-
-# ─── Cron ────────────────────────────────────────────────────────────────────
-# Scheduled tasks.
-
-cron:
-  - name: lookout
-    schedule: "30 7 * * *"
-    task:
-      title: "Publish the morning briefing"
-      template: researcher
-      autoRun: true
+logLevel: info
