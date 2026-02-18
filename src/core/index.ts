@@ -60,7 +60,7 @@ export async function main(): Promise<void> {
 
   // 5. Set up Fastify
   // biome-ignore lint/suspicious/noExplicitAny: Fastify's logger type is complex; our adapter is compatible at runtime
-  const fastify = Fastify({ logger: fastifyLogger as any })
+  const fastify = Fastify({ loggerInstance: fastifyLogger as any })
 
   // Health endpoint
   fastify.get('/health', async () => ({
