@@ -3,6 +3,7 @@
 import type { ChannelPlugin, KoshiConfig, ModelPlugin, SessionMessage, Tool, ToolCall } from '../types.js'
 import type { createAgentManager } from './agents.js'
 import { compactSession, estimateMessagesChars } from './compaction.js'
+import { cancelJob, createJob, listJobs } from './cron.js'
 import { createLogger } from './logger.js'
 import type { createMemory } from './memory.js'
 import type { createPromptBuilder } from './prompt.js'
@@ -195,6 +196,43 @@ const SKILL_TOOLS: Tool[] = [
   },
 ]
 
+const CRON_TOOLS: Tool[] = [
+  {
+    name: 'schedule_job',
+    description:
+      'Schedule a timed job. For reminders use payload_type "notify" with payload { message: "..." }. For background work use "spawn" with payload { task: "..." }.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        name: { type: 'string', description: 'Short human-readable name for the job' },
+        schedule_at: { type: 'string', description: 'ISO 8601 timestamp when the job should fire' },
+        payload_type: { type: 'string', enum: ['notify', 'spawn'], description: 'Job type' },
+        payload: { type: 'object', description: 'Job payload — { message } for notify, { task } for spawn' },
+      },
+      required: ['name', 'schedule_at', 'payload_type', 'payload'],
+    },
+  },
+  {
+    name: 'cancel_job',
+    description: 'Cancel a pending scheduled job by ID.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        id: { type: 'string', description: 'Job ID to cancel' },
+      },
+      required: ['id'],
+    },
+  },
+  {
+    name: 'list_jobs',
+    description: 'List all scheduled jobs with their status.',
+    inputSchema: {
+      type: 'object',
+      properties: {},
+    },
+  },
+]
+
 // ─── Tool Execution ──────────────────────────────────────────────────────────
 
 function executeTool(
@@ -337,6 +375,32 @@ function executeTool(
       }
       return lines.join('\n')
     }
+    case 'schedule_job': {
+      try {
+        const job = createJob({
+          name: input.name as string,
+          schedule_at: input.schedule_at as string,
+          payload_type: input.payload_type as 'notify' | 'spawn',
+          payload: input.payload as Record<string, unknown>,
+        })
+        return `Job scheduled: ${job.name} (id: ${job.id.slice(0, 8)}) — fires at ${job.schedule_at}`
+      } catch (err) {
+        return `Error: ${err instanceof Error ? err.message : String(err)}`
+      }
+    }
+    case 'cancel_job': {
+      const cancelled = cancelJob(input.id as string)
+      return cancelled
+        ? `Job ${(input.id as string).slice(0, 8)} cancelled.`
+        : `Job not found or already fired/cancelled.`
+    }
+    case 'list_jobs': {
+      const jobs = listJobs()
+      if (jobs.length === 0) return 'No scheduled jobs.'
+      return jobs
+        .map((j) => `[${j.id.slice(0, 8)}] ${j.name} — ${j.status} — fires: ${j.schedule_at} (${j.payload_type})`)
+        .join('\n')
+    }
     default:
       return `Unknown tool: ${name}`
   }
@@ -432,7 +496,7 @@ export function createMainLoop(opts: {
       const memories = memory.query(userContent, 5)
 
       // Build system prompt
-      const allTools = [...MAIN_TOOLS, ...MEMORY_TOOLS, ...SKILL_TOOLS]
+      const allTools = [...MAIN_TOOLS, ...MEMORY_TOOLS, ...SKILL_TOOLS, ...CRON_TOOLS]
 
       // Match skills against user message
       const skillMatches = matchSkills(userContent)

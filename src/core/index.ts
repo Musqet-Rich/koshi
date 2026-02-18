@@ -7,6 +7,7 @@ import type { ChannelPlugin, KoshiConfig, KoshiContext, ModelPlugin } from '../t
 import { createAgentManager } from './agents.js'
 import { createBuffer } from './buffer.js'
 import { loadConfig } from './config.js'
+import { initCron } from './cron.js'
 import { closeDatabase, initDatabase } from './db.js'
 import { createLogger, fastifyLogger, setLogLevel } from './logger.js'
 import { createMainLoop } from './main-loop.js'
@@ -164,6 +165,13 @@ export async function main(): Promise<void> {
     memory,
     db,
     notify: notifyUser,
+  })
+
+  // 10a. Initialize cron scheduler
+  initCron(db, router, (task: string) => {
+    agentManager.spawn({ task }).catch((err) => {
+      log.error('Cron spawn error', { error: err instanceof Error ? err.message : String(err) })
+    })
   })
 
   // 10. Start router

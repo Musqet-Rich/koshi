@@ -116,6 +116,19 @@ CREATE TABLE IF NOT EXISTS skills (
   updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
 );
 
+CREATE TABLE IF NOT EXISTS cron_jobs (
+  id TEXT PRIMARY KEY,
+  name TEXT NOT NULL,
+  schedule_at TEXT NOT NULL,
+  repeat_cron TEXT,
+  payload_type TEXT NOT NULL,
+  payload TEXT NOT NULL,
+  created_at TEXT NOT NULL,
+  status TEXT DEFAULT 'pending'
+);
+
+CREATE INDEX IF NOT EXISTS idx_cron_jobs_status ON cron_jobs(status);
+
 CREATE TABLE IF NOT EXISTS token_usage (
   id INTEGER PRIMARY KEY,
   agent_run_id TEXT,
