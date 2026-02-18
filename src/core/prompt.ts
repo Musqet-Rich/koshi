@@ -6,7 +6,9 @@ export function createPromptBuilder(config: KoshiConfig) {
       const sections: string[] = [config.identity.soul]
 
       if (opts.tools && opts.tools.length > 0) {
-        sections.push(`## Available Tools\n${opts.tools.map((t) => `- **${t.name}**: ${t.description}`).join('\n')}`)
+        sections.push(
+          `## Tools\nYou have tools available. USE THEM — don't describe what you would do, actually do it by calling the tools. When asked to perform actions (create files, search, spawn agents, etc.), call the appropriate tool immediately.\n\n${opts.tools.map((t) => `- **${t.name}**: ${t.description}`).join('\n')}`,
+        )
       }
 
       if (opts.memories && opts.memories.length > 0) {

@@ -34,8 +34,20 @@ export interface WsAssistantDone {
   conversation?: string
 }
 
+export interface WsActivityUpdate {
+  type: 'activity'
+  state: 'idle' | 'thinking' | 'tool_call' | 'streaming'
+  tool?: string
+  elapsed?: number
+  model?: string
+  session?: string
+  tokensIn?: number
+  tokensOut?: number
+  agents?: number
+}
+
 export type WsIncoming = WsUserMessage
-export type WsOutgoing = WsStatusMessage | WsAssistantChunk | WsAssistantDone
+export type WsOutgoing = WsStatusMessage | WsAssistantChunk | WsAssistantDone | WsActivityUpdate
 
 // ─── Client tracking ─────────────────────────────────────────────────────────
 

@@ -7,6 +7,8 @@ import type { createMemory } from './memory.js'
 import type { createPromptBuilder } from './prompt.js'
 import type { createRouter } from './router.js'
 import type { createSessionManager } from './sessions.js'
+import type { WsActivityUpdate } from './ws.js'
+import { broadcast } from './ws.js'
 
 const log = createLogger('main-loop')
 
@@ -229,6 +231,20 @@ export function createMainLoop(opts: {
       const userContent = batch.messages.map((m) => m.payload).join('\n')
       if (!userContent.trim()) return
 
+      const tickStart = Date.now()
+      const emitActivity = (state: WsActivityUpdate['state'], extra?: Partial<WsActivityUpdate>) => {
+        broadcast({
+          type: 'activity',
+          state,
+          model: config.agent.model,
+          session: MAIN_SESSION_ID,
+          elapsed: Math.round((Date.now() - tickStart) / 1000),
+          agents: agentManager.getRunningCount(),
+          ...extra,
+        })
+      }
+
+      emitActivity('thinking')
       log.info('Processing message', { channel: batch.channel, length: userContent.length })
 
       // Store user message in session
@@ -275,6 +291,7 @@ export function createMainLoop(opts: {
           count: response.toolCalls.length,
           tools: response.toolCalls.map((t) => t.name).join(', '),
         })
+        emitActivity('tool_call', { tool: response.toolCalls.map((t) => t.name).join(', ') })
 
         // Add assistant message with tool calls to conversation
         modelMessages.push({
@@ -308,9 +325,17 @@ export function createMainLoop(opts: {
         sessionManager.addMessage(MAIN_SESSION_ID, 'assistant', fullContent)
       }
 
+      emitActivity('idle')
       log.info('Response sent', { channel: replyChannel, length: fullContent.length })
     } catch (err) {
       log.error('Main loop error', { error: err instanceof Error ? err.message : err })
+      broadcast({
+        type: 'activity',
+        state: 'idle',
+        model: config.agent.model,
+        session: MAIN_SESSION_ID,
+        agents: agentManager.getRunningCount(),
+      })
     } finally {
       processing = false
     }
