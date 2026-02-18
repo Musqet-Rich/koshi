@@ -39,6 +39,19 @@ const SUBAGENT_TOOLS: Tool[] = [
     },
   },
   {
+    name: 'write_file',
+    description:
+      'Write content to a file. Use this for large outputs (file contents, long results, etc.) instead of returning them directly. Write to /tmp/koshi-agent/ and return the file path in your final response.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        path: { type: 'string', description: 'File path to write to (e.g. /tmp/koshi-agent/result.md)' },
+        content: { type: 'string', description: 'Content to write' },
+      },
+      required: ['path', 'content'],
+    },
+  },
+  {
     name: 'memory_store',
     description: 'Store a result or finding in long-term memory so the main agent can access it later.',
     inputSchema: {
@@ -99,6 +112,19 @@ async function executeSubagentTool(
           output = output.slice(0, MAX_OUTPUT_CHARS) + '\n... (truncated)'
         }
         return `Exit code ${e.code ?? 'unknown'}:\n${output}`
+      }
+    }
+    case 'write_file': {
+      const filePath = tc.input.path as string
+      const content = tc.input.content as string
+      const { mkdirSync, writeFileSync } = await import('node:fs')
+      const { dirname } = await import('node:path')
+      try {
+        mkdirSync(dirname(filePath), { recursive: true })
+        writeFileSync(filePath, content, 'utf-8')
+        return `Written ${content.length} bytes to ${filePath}`
+      } catch (err) {
+        return `Failed to write file: ${err instanceof Error ? err.message : String(err)}`
       }
     }
     case 'memory_store': {
@@ -174,11 +200,18 @@ export function createAgentManager(opts: {
         const sessionId = sessionManager.createSession({ model: modelName, type: 'sub-agent' })
         const memories = memory.query(options.task, 5)
 
-        const systemPrompt = promptBuilder.build({
+        const basePrompt = promptBuilder.build({
           memories,
           tools: SUBAGENT_TOOLS,
           activeContext: options.task,
         })
+        const systemPrompt = `${basePrompt}
+
+## Sub-agent Rules
+- You are a background worker. Complete the task and report results clearly.
+- For large outputs (file contents, long text, research results), use the write_file tool to write to /tmp/koshi-agent/<descriptive-name>.md, then mention the file path in your final response.
+- Your final text response will be passed back to the main agent. Keep it concise but include key findings and any file paths.
+- ALWAYS use tools to do work. Never describe what you would do — do it.`
 
         const model = getModel(modelName)
         const workspacePath = config.dataPath ? config.dataPath : process.cwd()
@@ -260,7 +293,7 @@ export function createAgentManager(opts: {
           completedAt: Date.now(),
         })
 
-        const summary = lastContent.slice(0, 500)
+        const summary = lastContent.slice(0, 2000)
         memory.store(`Agent completed task: ${options.task}\nResult: ${summary}`, 'agent', 'agent,result')
 
         log.info('Sub-agent completed', { runId: agentRunId.slice(0, 8), status: 'completed' })

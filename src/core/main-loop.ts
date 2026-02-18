@@ -37,7 +37,7 @@ const MAIN_TOOLS: Tool[] = [
   {
     name: 'spawn_agent',
     description:
-      'Spawn a background sub-agent to do work. It runs independently — has shell access (exec), memory, and web access (via curl). Stores results in memory when done. You will NOT get the result immediately — check memory or list_agents later.',
+      'Spawn a background sub-agent to do work. It runs independently with shell access, memory, file writing, and web access (via curl). You will be notified automatically when it completes — the result will appear as a system message. For large outputs, the agent writes files to /tmp/koshi-agent/ which you can read with read_file.',
     inputSchema: {
       type: 'object',
       properties: {
@@ -57,6 +57,18 @@ const MAIN_TOOLS: Tool[] = [
     inputSchema: {
       type: 'object',
       properties: {},
+    },
+  },
+  {
+    name: 'read_file',
+    description:
+      'Read a file from disk. Use this to read files that sub-agents have written (e.g. /tmp/koshi-agent/*.md). Returns the file contents.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        path: { type: 'string', description: 'File path to read' },
+      },
+      required: ['path'],
     },
   },
 ]
@@ -125,6 +137,20 @@ function executeTool(
 ): string {
   const { name, input } = toolCall
 
+  if (name === 'read_file') {
+    const filePath = input.path as string
+    try {
+      const { readFileSync } = require('node:fs') as typeof import('node:fs')
+      const content = readFileSync(filePath, 'utf-8')
+      if (content.length > 20_000) {
+        return `${content.slice(0, 20_000)}\n... (truncated at 20k chars, file is ${content.length} chars total)`
+      }
+      return content
+    } catch (err) {
+      return `Failed to read file: ${err instanceof Error ? err.message : String(err)}`
+    }
+  }
+
   switch (name) {
     case 'memory_query': {
       const query = input.query as string
@@ -159,7 +185,7 @@ function executeTool(
         .spawn({ task, model, timeout })
         .then((result) => {
           log.info('Sub-agent finished', { runId: result.agentRunId.slice(0, 8), status: result.status })
-          const summary = result.result?.slice(0, 500) ?? result.error ?? ''
+          const summary = result.result?.slice(0, 2000) ?? result.error ?? ''
           const notification = `🤖 Sub-agent [${result.agentRunId.slice(0, 8)}] ${result.status}${summary ? `: ${summary}` : ''}`
           // Show notification immediately in TUI
           notifyTui(notification)
