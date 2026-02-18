@@ -55,6 +55,17 @@ pnpm lint:fix   # biome auto-fix
 pnpm dev        # run daemon with tsx (no build step)
 ```
 
+## Design Philosophy
+
+Four primitives, each with a clear role:
+
+- **Skills** teach the agent *how* to handle things
+- **Memory** gives it *what* it knows
+- **Tools** let it *act* directly
+- **Prompts** steer but don't micromanage
+
+Everything else is composition.
+
 ## Architecture
 
 - **Single Node.js process** — Fastify server, plugin architecture
