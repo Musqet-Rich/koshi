@@ -1,5 +1,5 @@
-import { Container, Spacer, Text } from '@mariozechner/pi-tui'
-import { theme } from './theme.js'
+import { Container, Markdown, Spacer, Text } from '@mariozechner/pi-tui'
+import { mdTheme, theme } from './theme.js'
 
 export class ChatLog extends Container {
   private lastRole: string | null = null
@@ -22,17 +22,17 @@ export class ChatLog extends Container {
       this.addChild(new Spacer(1))
     }
     this.lastRole = 'assistant'
-    this.addChild(new Text(theme.assistant(`  ${text}`), 1, 0))
+    this.addChild(new Markdown(text, 2, 0, mdTheme))
   }
 
-  private streamingComponent: Text | null = null
+  private streamingComponent: Markdown | null = null
 
   startAssistant(text: string) {
     if (this.lastRole && this.lastRole !== 'assistant') {
       this.addChild(new Spacer(1))
     }
     this.lastRole = 'assistant'
-    const component = new Text(theme.assistant(`  ${text}`), 1, 0)
+    const component = new Markdown(text, 2, 0, mdTheme)
     this.streamingComponent = component
     this.addChild(component)
   }
@@ -42,12 +42,12 @@ export class ChatLog extends Container {
       this.startAssistant(text)
       return
     }
-    this.streamingComponent.setText(theme.assistant(`  ${text}`))
+    this.streamingComponent.setText(text)
   }
 
   finalizeAssistant(text: string) {
     if (this.streamingComponent) {
-      this.streamingComponent.setText(theme.assistant(`  ${text}`))
+      this.streamingComponent.setText(text)
       this.streamingComponent = null
       return
     }
