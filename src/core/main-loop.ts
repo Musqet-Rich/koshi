@@ -624,7 +624,7 @@ ${recentExchange.slice(0, 2000)}`
             ? getModel(config.agent.subAgentModel)
             : getModel(modelName)
           const extractResult = await subModel.complete(
-            [{ role: 'system', content: extractPrompt }],
+            [{ role: 'user', content: extractPrompt }],
             [],
           )
           const body = extractResult.content?.trim() ?? ''

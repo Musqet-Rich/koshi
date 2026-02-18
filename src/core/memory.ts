@@ -1,6 +1,9 @@
 import type Database from 'better-sqlite3'
 import type { MemoryResult } from '../types.js'
+import { createLogger } from './logger.js'
 import { expandSynonyms } from './synonyms.js'
+
+const log = createLogger('memory')
 
 interface MemoryRow {
   id: number
@@ -55,7 +58,8 @@ export function createMemory(db: Database.Database) {
       let rows: MemoryRow[]
       try {
         rows = matchStmt.all(ftsQuery, limit * 3) as MemoryRow[]
-      } catch {
+      } catch (err) {
+        log.warn('Memory FTS query failed', { query: ftsQuery, error: err instanceof Error ? err.message : String(err) })
         return []
       }
 
