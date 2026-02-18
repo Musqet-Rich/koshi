@@ -1,22 +1,22 @@
 // Koshi (骨子) — core daemon entry point
 
+import { existsSync } from 'node:fs'
+import { resolve } from 'node:path'
 import Fastify from 'fastify'
-import { existsSync } from 'fs'
-import { resolve } from 'path'
-import { loadConfig } from './config.js'
-import { initDatabase, closeDatabase } from './db.js'
-import { createLogger, setLogLevel, fastifyLogger } from './logger.js'
-import { loadPlugins } from './plugins.js'
-import { createBuffer } from './buffer.js'
-import { createRouter } from './router.js'
-import { createMemory } from './memory.js'
-import { createSessionManager } from './sessions.js'
-import { createPromptBuilder } from './prompt.js'
-import { createTaskManager } from './tasks.js'
+import type { ChannelPlugin, KoshiConfig, KoshiContext, ModelPlugin } from '../types.js'
 import { createAgentManager } from './agents.js'
-import type { KoshiContext, ModelPlugin, ChannelPlugin } from '../types.js'
-import { registerWebSocket, setTuiContext } from './ws.js'
+import { createBuffer } from './buffer.js'
+import { loadConfig } from './config.js'
+import { closeDatabase, initDatabase } from './db.js'
+import { createLogger, fastifyLogger, setLogLevel } from './logger.js'
 import { createMainLoop } from './main-loop.js'
+import { createMemory } from './memory.js'
+import { loadPlugins } from './plugins.js'
+import { createPromptBuilder } from './prompt.js'
+import { createRouter } from './router.js'
+import { createSessionManager } from './sessions.js'
+import { createTaskManager } from './tasks.js'
+import { registerWebSocket, setTuiContext } from './ws.js'
 
 const log = createLogger('core')
 
@@ -32,7 +32,7 @@ export async function main(): Promise<void> {
     log.warn('koshi.yaml not found, falling back to koshi.example.yaml')
   }
 
-  let config
+  let config: KoshiConfig
   try {
     config = loadConfig(configPath)
   } catch (err) {
@@ -54,11 +54,12 @@ export async function main(): Promise<void> {
   const memory = createMemory(db)
   const sessionManager = createSessionManager(db)
   const promptBuilder = createPromptBuilder(config)
-  const taskManager = createTaskManager(db)
+  const _taskManager = createTaskManager(db)
   const buffer = createBuffer(db)
   const router = createRouter(config, buffer)
 
   // 5. Set up Fastify
+  // biome-ignore lint/suspicious/noExplicitAny: Fastify's logger type is complex; our adapter is compatible at runtime
   const fastify = Fastify({ logger: fastifyLogger as any })
 
   // Health endpoint
@@ -124,12 +125,13 @@ export async function main(): Promise<void> {
   // 8. Model lookup helper
   const getModel = (name: string): ModelPlugin => {
     const model = context.models[name]
-    if (!model) throw new Error(`Model "${name}" not registered. Available: ${Object.keys(context.models).join(', ') || 'none'}`)
+    if (!model)
+      throw new Error(`Model "${name}" not registered. Available: ${Object.keys(context.models).join(', ') || 'none'}`)
     return model
   }
 
   // 9. Initialize agent manager
-  const agentManager = createAgentManager({
+  const _agentManager = createAgentManager({
     config,
     getModel,
     sessionManager,

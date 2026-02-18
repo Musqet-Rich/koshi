@@ -9,7 +9,11 @@
   "scripts": {
     "build": "tsc",
     "dev": "tsx src/core/index.ts",
-    "start": "node dist/core/index.js"
+    "start": "node dist/core/index.js",
+    "check": "tsc --noEmit && biome check src/",
+    "lint": "biome check src/",
+    "lint:fix": "biome check --write src/",
+    "typecheck": "tsc --noEmit"
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.39.0",
@@ -26,6 +30,7 @@
     "yaml": "^2.7.0"
   },
   "devDependencies": {
+    "@biomejs/biome": "^2.4.2",
     "@types/better-sqlite3": "^7.6.0",
     "@types/node": "^22.0.0",
     "tsx": "^4.0.0",

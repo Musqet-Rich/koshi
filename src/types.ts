@@ -59,6 +59,13 @@ export interface KoshiContext {
   config: KoshiConfig
 }
 
+/** Extended context with runtime fields added by plugins */
+export interface KoshiContextWithExtras extends KoshiContext {
+  _tuiChannel?: unknown
+  db?: unknown
+  models?: Record<string, ModelPlugin>
+}
+
 export interface KoshiPlugin {
   name: string
   version: string
@@ -128,10 +135,7 @@ export interface RouteMatch {
   from?: string
 }
 
-export type RouteAction =
-  | { forward: string }
-  | { spawn: SpawnRouteAction }
-  | { drop: true }
+export type RouteAction = { forward: string } | { spawn: SpawnRouteAction } | { drop: true }
 
 export interface SpawnRouteAction {
   template: string

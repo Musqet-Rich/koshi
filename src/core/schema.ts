@@ -1,7 +1,4 @@
-import Database from "better-sqlite3";
-import { readFileSync } from "fs";
-import { join, dirname } from "path";
-import { fileURLToPath } from "url";
+import type Database from 'better-sqlite3'
 
 const SCHEMA_SQL = `
 CREATE TABLE IF NOT EXISTS memories (
@@ -120,10 +117,10 @@ CREATE TABLE IF NOT EXISTS token_usage (
   cost_usd REAL,
   created_at DATETIME DEFAULT CURRENT_TIMESTAMP
 );
-`;
+`
 
 export function applySchema(db: Database.Database): void {
-  db.pragma("journal_mode = WAL");
-  db.pragma("foreign_keys = ON");
-  db.exec(SCHEMA_SQL);
+  db.pragma('journal_mode = WAL')
+  db.pragma('foreign_keys = ON')
+  db.exec(SCHEMA_SQL)
 }

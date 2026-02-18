@@ -1,11 +1,11 @@
 // Main agent loop — polls router for batches, sends to model, routes responses back
 
-import type { KoshiConfig, ModelPlugin, SessionMessage, ChannelPlugin } from '../types.js'
+import type { ChannelPlugin, KoshiConfig, ModelPlugin, SessionMessage } from '../types.js'
+import { createLogger } from './logger.js'
+import type { createMemory } from './memory.js'
+import type { createPromptBuilder } from './prompt.js'
 import type { createRouter } from './router.js'
 import type { createSessionManager } from './sessions.js'
-import type { createPromptBuilder } from './prompt.js'
-import type { createMemory } from './memory.js'
-import { createLogger } from './logger.js'
 
 const log = createLogger('main-loop')
 
@@ -40,7 +40,7 @@ export function createMainLoop(opts: {
       if (!batch) return
 
       // Extract user message from batch
-      const userContent = batch.messages.map(m => m.payload).join('\n')
+      const userContent = batch.messages.map((m) => m.payload).join('\n')
       if (!userContent.trim()) return
 
       log.info('Processing message', { channel: batch.channel, length: userContent.length })
@@ -60,7 +60,7 @@ export function createMainLoop(opts: {
       // Build messages for model
       const modelMessages: SessionMessage[] = [
         { role: 'system', content: systemPrompt },
-        ...history.map(m => ({ role: m.role, content: m.content })),
+        ...history.map((m) => ({ role: m.role, content: m.content })),
       ]
 
       // Get the model

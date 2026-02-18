@@ -1,4 +1,4 @@
-import Database from 'better-sqlite3'
+import type Database from 'better-sqlite3'
 import type { BufferedMessage, MessageBatch } from '../types.js'
 
 export const Priority = {
@@ -10,21 +10,17 @@ export const Priority = {
 export function createBuffer(db: Database.Database) {
   const insertStmt = db.prepare(
     `INSERT INTO buffer (channel, sender, conversation, payload, received_at, priority, routed)
-     VALUES (@channel, @sender, @conversation, @payload, @receivedAt, @priority, 0)`
+     VALUES (@channel, @sender, @conversation, @payload, @receivedAt, @priority, 0)`,
   )
 
   const getUnroutedStmt = db.prepare(
     `SELECT id, channel, sender, conversation, payload, received_at, priority, routed
-     FROM buffer WHERE routed = 0 ORDER BY priority ASC, id ASC`
+     FROM buffer WHERE routed = 0 ORDER BY priority ASC, id ASC`,
   )
 
-  const markRoutedStmt = db.prepare(
-    `UPDATE buffer SET routed = 1 WHERE id = ?`
-  )
+  const markRoutedStmt = db.prepare(`UPDATE buffer SET routed = 1 WHERE id = ?`)
 
-  const cleanupStmt = db.prepare(
-    `DELETE FROM buffer WHERE routed = 1 AND received_at < ?`
-  )
+  const cleanupStmt = db.prepare(`DELETE FROM buffer WHERE routed = 1 AND received_at < ?`)
 
   return {
     insert(msg: {

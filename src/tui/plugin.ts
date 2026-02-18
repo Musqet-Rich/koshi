@@ -1,11 +1,19 @@
-import type { KoshiPlugin, KoshiContext, ChannelPlugin, IncomingMessage, OutgoingMessage, PluginConfig } from '../../types.js'
-import { getClients, broadcast } from '../../core/ws.js'
-import type { WsUserMessage } from '../../core/ws.js'
-import { createLogger } from '../../core/logger.js'
+import { createLogger } from '../core/logger.js'
+import type { WsUserMessage } from '../core/ws.js'
+import { broadcast } from '../core/ws.js'
+import type {
+  ChannelPlugin,
+  IncomingMessage,
+  KoshiContext,
+  KoshiContextWithExtras,
+  KoshiPlugin,
+  OutgoingMessage,
+  PluginConfig,
+} from '../types.js'
 
 const log = createLogger('tui-channel')
 
-interface TuiChannelPlugin extends KoshiPlugin, ChannelPlugin {
+export interface TuiChannelPlugin extends KoshiPlugin, ChannelPlugin {
   handleUserMessage(msg: WsUserMessage): void
 }
 
@@ -14,11 +22,7 @@ const plugin: TuiChannelPlugin = {
   version: '0.0.1',
 
   async init(context: KoshiContext, _config: PluginConfig) {
-    // Hook into the WebSocket layer to receive user messages
-    // The WS handler in core/ws.ts needs a callback — we register via the context
-    const fastify = context.fastify as any
-    // Store reference so ws.ts can route messages to us
-    ;(context as any)._tuiChannel = this
+    ;(context as KoshiContextWithExtras)._tuiChannel = this
     log.info('TUI channel plugin initialized')
   },
 
@@ -46,7 +50,6 @@ const plugin: TuiChannelPlugin = {
     }
   },
 
-  // Called by ws.ts when a user_message arrives
   handleUserMessage(msg: WsUserMessage): void {
     if (!this.onMessage) {
       log.warn('No onMessage handler registered — message dropped')

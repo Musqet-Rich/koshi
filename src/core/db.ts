@@ -1,6 +1,6 @@
+import { mkdirSync } from 'node:fs'
+import { join } from 'node:path'
 import Database from 'better-sqlite3'
-import { mkdirSync } from 'fs'
-import { join } from 'path'
 import { applySchema } from './schema.js'
 
 export function initDatabase(dataDir: string): Database.Database {

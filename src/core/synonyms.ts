@@ -2,12 +2,12 @@
 // Used by memory.ts to expand search queries before FTS5 lookup
 
 // Internal storage: each word maps to its full synonym group (including itself)
-const synonymMap = new Map<string, Set<string>>();
+const synonymMap = new Map<string, Set<string>>()
 
 function registerGroup(words: string[]): void {
-  const group = new Set(words);
+  const group = new Set(words)
   for (const word of words) {
-    synonymMap.set(word, group);
+    synonymMap.set(word, group)
   }
 }
 
@@ -28,10 +28,10 @@ const BUILTIN_GROUPS: string[][] = [
   ['memory', 'remember', 'recall', 'context'],
   ['route', 'routing', 'dispatch', 'match'],
   ['buffer', 'queue', 'pending'],
-];
+]
 
 for (const group of BUILTIN_GROUPS) {
-  registerGroup(group);
+  registerGroup(group)
 }
 
 /**
@@ -39,34 +39,34 @@ for (const group of BUILTIN_GROUPS) {
  * e.g. "api auth" → "(api OR interface OR endpoint) (auth OR authentication OR authorization OR authn OR authz)"
  */
 export function expandSynonyms(query: string): string {
-  const words = query.trim().split(/\s+/).filter(Boolean);
+  const words = query.trim().split(/\s+/).filter(Boolean)
   return words
     .map((word) => {
-      const group = synonymMap.get(word.toLowerCase());
-      if (!group || group.size <= 1) return word;
-      const members = Array.from(group);
-      return `(${members.join(' OR ')})`;
+      const group = synonymMap.get(word.toLowerCase())
+      if (!group || group.size <= 1) return word
+      const members = Array.from(group)
+      return `(${members.join(' OR ')})`
     })
-    .join(' ');
+    .join(' ')
 }
 
 /**
  * Add a synonym group at runtime. Merges with any existing group the word belongs to.
  */
 export function addSynonyms(word: string, synonyms: string[]): void {
-  const allWords = [word, ...synonyms].map((w) => w.toLowerCase());
+  const allWords = [word, ...synonyms].map((w) => w.toLowerCase())
   // Collect any existing groups these words belong to
-  const merged = new Set<string>();
+  const merged = new Set<string>()
   for (const w of allWords) {
-    merged.add(w);
-    const existing = synonymMap.get(w);
+    merged.add(w)
+    const existing = synonymMap.get(w)
     if (existing) {
-      for (const e of existing) merged.add(e);
+      for (const e of existing) merged.add(e)
     }
   }
   // Point all words to the merged group
   for (const w of merged) {
-    synonymMap.set(w, merged);
+    synonymMap.set(w, merged)
   }
 }
 
@@ -74,9 +74,9 @@ export function addSynonyms(word: string, synonyms: string[]): void {
  * Get current synonym map for debugging/export.
  */
 export function getSynonymMap(): Record<string, string[]> {
-  const result: Record<string, string[]> = {};
+  const result: Record<string, string[]> = {}
   for (const [word, group] of synonymMap) {
-    result[word] = Array.from(group);
+    result[word] = Array.from(group)
   }
-  return result;
+  return result
 }

@@ -1,6 +1,6 @@
-import React, { useState, useEffect, useCallback, useRef } from 'react'
-import { Box, Text, useInput, useApp, useStdout } from 'ink'
+import { Box, Text, useApp, useInput, useStdout } from 'ink'
 import TextInput from 'ink-text-input'
+import { useCallback, useEffect, useRef, useState } from 'react'
 import WebSocket from 'ws'
 
 interface Message {
@@ -40,7 +40,7 @@ export function App({ port, session }: Props) {
           setServerName(msg.name ?? 'koshi')
         } else if (msg.type === 'assistant_chunk') {
           setStreaming(true)
-          setMessages(prev => {
+          setMessages((prev) => {
             const last = prev[prev.length - 1]
             if (last?.role === 'assistant' && streaming) {
               return [...prev.slice(0, -1), { role: 'assistant', content: last.content + msg.text }]
@@ -49,7 +49,7 @@ export function App({ port, session }: Props) {
           })
         } else if (msg.type === 'assistant_done') {
           setStreaming(false)
-          setMessages(prev => {
+          setMessages((prev) => {
             const last = prev[prev.length - 1]
             if (last?.role === 'assistant') {
               return [...prev.slice(0, -1), { role: 'assistant', content: msg.content }]
@@ -66,26 +66,31 @@ export function App({ port, session }: Props) {
     return () => {
       ws.close()
     }
-  }, [port])
+  }, [port, streaming])
 
   useInput((ch, key) => {
     if (key.ctrl && ch === 'c') exit()
     if (key.ctrl && ch === 'd') exit()
   })
 
-  const handleSubmit = useCallback((value: string) => {
-    const trimmed = value.trim()
-    if (!trimmed || !wsRef.current || status !== 'connected') return
+  const handleSubmit = useCallback(
+    (value: string) => {
+      const trimmed = value.trim()
+      if (!trimmed || !wsRef.current || status !== 'connected') return
 
-    setMessages(prev => [...prev, { role: 'user', content: trimmed }])
-    setInput('')
+      setMessages((prev) => [...prev, { role: 'user', content: trimmed }])
+      setInput('')
 
-    wsRef.current.send(JSON.stringify({
-      type: 'user_message',
-      content: trimmed,
-      conversation: session,
-    }))
-  }, [status, session])
+      wsRef.current.send(
+        JSON.stringify({
+          type: 'user_message',
+          content: trimmed,
+          conversation: session,
+        }),
+      )
+    },
+    [status, session],
+  )
 
   // Show last N messages that fit in terminal
   const maxVisible = Math.max(rows - 5, 3)
@@ -104,21 +109,26 @@ export function App({ port, session }: Props) {
         <Text dimColor>session:{session}</Text>
         {streaming && <Text color="cyan"> ▍</Text>}
       </Box>
-      <Box><Text dimColor>{'─'.repeat(Math.min(stdout?.columns ?? 80, 120))}</Text></Box>
+      <Box>
+        <Text dimColor>{'─'.repeat(Math.min(stdout?.columns ?? 80, 120))}</Text>
+      </Box>
 
       {/* Messages */}
       <Box flexDirection="column" flexGrow={1}>
         {visible.map((msg, i) => (
-          <Box key={i} marginBottom={0}>
+          <Box key={`${msg.role}-${msg.content.slice(0, 20)}-${i}`} marginBottom={0}>
             <Text color={msg.role === 'user' ? 'blue' : 'white'}>
-              {msg.role === 'user' ? '> ' : '  '}{msg.content}
+              {msg.role === 'user' ? '> ' : '  '}
+              {msg.content}
             </Text>
           </Box>
         ))}
       </Box>
 
       {/* Input */}
-      <Box><Text dimColor>{'─'.repeat(Math.min(stdout?.columns ?? 80, 120))}</Text></Box>
+      <Box>
+        <Text dimColor>{'─'.repeat(Math.min(stdout?.columns ?? 80, 120))}</Text>
+      </Box>
       <Box>
         <Text color="blue">&gt; </Text>
         <TextInput value={input} onChange={setInput} onSubmit={handleSubmit} />

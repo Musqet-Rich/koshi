@@ -1,4 +1,15 @@
-import type { KoshiPlugin, KoshiContext, PluginConfig, ModelPlugin, SessionMessage, Tool, ModelResponse, StreamChunk, TokenUsage } from '../../types.js'
+import type {
+  KoshiContext,
+  KoshiContextWithExtras,
+  KoshiPlugin,
+  ModelPlugin,
+  ModelResponse,
+  PluginConfig,
+  SessionMessage,
+  StreamChunk,
+  TokenUsage,
+  Tool,
+} from '../../types.js'
 import { createAnthropicClient } from './client.js'
 
 const plugin: KoshiPlugin = {
@@ -26,7 +37,7 @@ const plugin: KoshiPlugin = {
             messages,
             tools,
           })
-          await recordUsage(koshi, response.usage!)
+          if (response.usage) await recordUsage(koshi, response.usage)
           return response
         },
 
@@ -43,19 +54,20 @@ const plugin: KoshiPlugin = {
       }
 
       // Register on the context so other parts of Koshi can look up models by name
-      ;(koshi as any).models = (koshi as any).models ?? {}
-      ;(koshi as any).models[name] = modelPlugin
+      const ctx = koshi as KoshiContextWithExtras
+      ctx.models = ctx.models ?? {}
+      ctx.models[name] = modelPlugin
     }
   },
 }
 
 async function recordUsage(koshi: KoshiContext, usage: TokenUsage): Promise<void> {
   try {
-    const db = (koshi as any).db
+    const db = (koshi as KoshiContextWithExtras).db as import('better-sqlite3').Database | undefined
     if (!db) return
     db.prepare(
       `INSERT INTO token_usage (agent_run_id, session_id, input_tokens, output_tokens, model, cost_usd, created_at)
-       VALUES (?, ?, ?, ?, ?, ?, datetime('now'))`
+       VALUES (?, ?, ?, ?, ?, ?, datetime('now'))`,
     ).run(
       usage.agentRunId ?? null,
       usage.sessionId ?? null,

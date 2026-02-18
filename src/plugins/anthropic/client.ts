@@ -1,5 +1,5 @@
 import Anthropic from '@anthropic-ai/sdk'
-import type { Tool, ToolCall, SessionMessage, ModelResponse, StreamChunk, TokenUsage } from '../../types.js'
+import type { ModelResponse, SessionMessage, StreamChunk, TokenUsage, Tool, ToolCall } from '../../types.js'
 
 // Cost per million tokens: [input, output]
 const MODEL_COSTS: Record<string, [number, number]> = {
@@ -14,7 +14,7 @@ function estimateCost(model: string, input: number, output: number): number {
 }
 
 function mapTools(tools: Tool[]): Anthropic.Tool[] {
-  return tools.map(t => ({
+  return tools.map((t) => ({
     name: t.name,
     description: t.description,
     input_schema: t.inputSchema as Anthropic.Tool.InputSchema,
@@ -22,16 +22,18 @@ function mapTools(tools: Tool[]): Anthropic.Tool[] {
 }
 
 function mapMessages(messages: SessionMessage[]): Anthropic.MessageParam[] {
-  return messages.map(m => {
+  return messages.map((m) => {
     if (m.role === 'tool') {
       // Tool results go as user messages with tool_result content blocks
       return {
         role: 'user' as const,
-        content: [{
-          type: 'tool_result' as const,
-          tool_use_id: m.toolCalls?.[0]?.id ?? '',
-          content: m.content,
-        }],
+        content: [
+          {
+            type: 'tool_result' as const,
+            tool_use_id: m.toolCalls?.[0]?.id ?? '',
+            content: m.content,
+          },
+        ],
       }
     }
     if (m.role === 'assistant' && m.toolCalls?.length) {
@@ -49,7 +51,7 @@ function mapMessages(messages: SessionMessage[]): Anthropic.MessageParam[] {
 function extractToolCalls(content: Anthropic.ContentBlock[]): ToolCall[] {
   return content
     .filter((b): b is Anthropic.ToolUseBlock => b.type === 'tool_use')
-    .map(b => ({ id: b.id, name: b.name, input: b.input as Record<string, unknown> }))
+    .map((b) => ({ id: b.id, name: b.name, input: b.input as Record<string, unknown> }))
 }
 
 export function createAnthropicClient(apiKey: string) {
@@ -75,7 +77,7 @@ export function createAnthropicClient(apiKey: string) {
 
       const text = response.content
         .filter((b): b is Anthropic.TextBlock => b.type === 'text')
-        .map(b => b.text)
+        .map((b) => b.text)
         .join('')
 
       const toolCalls = extractToolCalls(response.content)
@@ -110,7 +112,7 @@ export function createAnthropicClient(apiKey: string) {
       }
 
       const stream = client.messages.stream(params)
-      let currentToolCall: Partial<ToolCall> | null = null
+      let currentToolCall: { id: string; name: string } | null = null
       let toolInput = ''
 
       for await (const event of stream) {
@@ -132,8 +134,8 @@ export function createAnthropicClient(apiKey: string) {
             yield {
               type: 'tool_use',
               toolCall: {
-                id: currentToolCall.id!,
-                name: currentToolCall.name!,
+                id: currentToolCall.id,
+                name: currentToolCall.name,
                 input: JSON.parse(toolInput || '{}'),
               },
             }
@@ -141,7 +143,7 @@ export function createAnthropicClient(apiKey: string) {
             toolInput = ''
           }
         } else if (event.type === 'message_delta') {
-          const stopReason = (event.delta as any).stop_reason
+          const stopReason = event.delta.stop_reason
           if (stopReason) {
             yield { type: 'stop', stopReason }
           }

@@ -1,4 +1,11 @@
-import type { KoshiPlugin, KoshiContext, ChannelPlugin, IncomingMessage, OutgoingMessage, PluginConfig } from '../../types.js'
+import type {
+  ChannelPlugin,
+  IncomingMessage,
+  KoshiContext,
+  KoshiPlugin,
+  OutgoingMessage,
+  PluginConfig,
+} from '../../types.js'
 
 interface AutotestPlugin extends KoshiPlugin, ChannelPlugin {
   inject(message: string, opts?: { sender?: string; conversation?: string }): Promise<void>
@@ -7,7 +14,7 @@ interface AutotestPlugin extends KoshiPlugin, ChannelPlugin {
 }
 
 const responses: Array<{ content: string; conversation?: string }> = []
-let waiters: Array<{ resolve: (content: string) => void; reject: (err: Error) => void }> = []
+const waiters: Array<{ resolve: (content: string) => void; reject: (err: Error) => void }> = []
 
 const plugin: AutotestPlugin = {
   name: '@koshi/autotest',
@@ -46,7 +53,9 @@ const plugin: AutotestPlugin = {
   async waitForResponse(timeoutMs = 30_000): Promise<string> {
     // If there's already a response queued, return it immediately
     if (responses.length > 0) {
-      return responses.shift()!.content
+      const next = responses.shift()
+      if (next) return next.content
+      throw new Error('autotest: response queue unexpectedly empty')
     }
 
     return new Promise<string>((resolve, reject) => {
@@ -71,8 +80,8 @@ const plugin: AutotestPlugin = {
 
     // If someone is waiting, resolve them first
     if (waiters.length > 0) {
-      const waiter = waiters.shift()!
-      waiter.resolve(entry.content)
+      const waiter = waiters.shift()
+      if (waiter) waiter.resolve(entry.content)
     } else {
       responses.push(entry)
     }

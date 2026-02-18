@@ -33,7 +33,7 @@ function write(level: LogLevel, component: string, message: string, extra?: Reco
     message,
     ...extra,
   }
-  process.stdout.write(JSON.stringify(entry) + '\n')
+  process.stdout.write(`${JSON.stringify(entry)}\n`)
 }
 
 export function createLogger(component: string): Logger {
@@ -59,13 +59,18 @@ function createFastifyChild(component: string): FastifyLoggerAdapter {
     warn: (msgOrObj: unknown, ...args: unknown[]) => fastifyLog(child, 'warn', msgOrObj, ...args),
     fatal: (msgOrObj: unknown, ...args: unknown[]) => fastifyLog(child, 'error', msgOrObj, ...args),
     trace: (msgOrObj: unknown, ...args: unknown[]) => fastifyLog(child, 'debug', msgOrObj, ...args),
-    child: (bindings: Record<string, unknown>) => createFastifyChild(bindings.name as string || component),
+    child: (bindings: Record<string, unknown>) => createFastifyChild((bindings.name as string) || component),
     silent: noop,
     level: 'info',
   }
 }
 
-function fastifyLog(logger: Logger, level: 'debug' | 'info' | 'warn' | 'error', msgOrObj: unknown, ...args: unknown[]): void {
+function fastifyLog(
+  logger: Logger,
+  level: 'debug' | 'info' | 'warn' | 'error',
+  msgOrObj: unknown,
+  ...args: unknown[]
+): void {
   if (typeof msgOrObj === 'string') {
     logger[level](msgOrObj)
   } else if (typeof msgOrObj === 'object' && msgOrObj !== null) {
@@ -94,7 +99,7 @@ export const fastifyLogger: FastifyLoggerAdapter = {
   warn: (msgOrObj: unknown, ...args: unknown[]) => fastifyLog(fastifyBase, 'warn', msgOrObj, ...args),
   fatal: (msgOrObj: unknown, ...args: unknown[]) => fastifyLog(fastifyBase, 'error', msgOrObj, ...args),
   trace: (msgOrObj: unknown, ...args: unknown[]) => fastifyLog(fastifyBase, 'debug', msgOrObj, ...args),
-  child: (bindings: Record<string, unknown>) => createFastifyChild(bindings.name as string || 'fastify'),
+  child: (bindings: Record<string, unknown>) => createFastifyChild((bindings.name as string) || 'fastify'),
   silent: noop,
   level: 'info',
 }

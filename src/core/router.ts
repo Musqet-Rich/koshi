@@ -1,4 +1,4 @@
-import type { KoshiConfig, ChannelPlugin, MessageBatch, RouteRule, RouteMatch, BufferedMessage } from '../types.js'
+import type { ChannelPlugin, KoshiConfig, MessageBatch, RouteMatch } from '../types.js'
 import type { createBuffer } from './buffer.js'
 
 export interface SpawnIntent {
@@ -10,12 +10,12 @@ export interface SpawnIntent {
 function matchesRule(match: RouteMatch, batch: MessageBatch): boolean {
   if (match.channel && batch.channel !== match.channel) return false
   if (match.from) {
-    const senders = new Set(batch.messages.map(m => m.sender))
+    const senders = new Set(batch.messages.map((m) => m.sender))
     if (!senders.has(match.from)) return false
   }
   if (match.event) {
     // event matching against payload — check if any message payload contains the event
-    const hasEvent = batch.messages.some(m => m.payload === match.event)
+    const hasEvent = batch.messages.some((m) => m.payload === match.event)
     if (!hasEvent) return false
   }
   return true
@@ -45,7 +45,7 @@ export function createRouter(config: KoshiConfig, buffer: ReturnType<typeof crea
     const batches = buffer.getUnrouted()
 
     for (const batch of batches) {
-      const ids = batch.messages.map(m => m.id)
+      const ids = batch.messages.map((m) => m.id)
       let matched = false
 
       for (const rule of config.routes) {

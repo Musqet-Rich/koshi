@@ -1,5 +1,5 @@
-import { readFileSync } from 'fs'
-import { resolve } from 'path'
+import { readFileSync } from 'node:fs'
+import { resolve } from 'node:path'
 import { parse } from 'yaml'
 import type { KoshiConfig } from '../types.js'
 
@@ -8,7 +8,7 @@ import type { KoshiConfig } from '../types.js'
  * Throws if a referenced env var is not set.
  */
 function interpolateEnv(raw: string): string {
-  return raw.replace(/\$\{([^}]+)\}/g, (match, varName) => {
+  return raw.replace(/\$\{([^}]+)\}/g, (_match, varName) => {
     const value = process.env[varName]
     if (value === undefined) {
       throw new Error(`Environment variable "${varName}" is referenced in config but not set`)
@@ -27,8 +27,8 @@ export function loadConfig(path?: string): KoshiConfig {
   let raw: string
   try {
     raw = readFileSync(configPath, 'utf-8')
-  } catch (err: any) {
-    throw new Error(`Failed to read config file at ${configPath}: ${err.message}`)
+  } catch (err: unknown) {
+    throw new Error(`Failed to read config file at ${configPath}: ${err instanceof Error ? err.message : err}`)
   }
 
   // Env var interpolation before YAML parsing
@@ -51,7 +51,7 @@ export function loadConfig(path?: string): KoshiConfig {
   }
   if (!(agentModel in doc.models)) {
     throw new Error(
-      `agent.model "${agentModel}" does not match any defined model. Available: ${Object.keys(doc.models).join(', ')}`
+      `agent.model "${agentModel}" does not match any defined model. Available: ${Object.keys(doc.models).join(', ')}`,
     )
   }
 

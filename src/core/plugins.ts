@@ -1,5 +1,5 @@
 import { resolve } from 'node:path'
-import type { KoshiConfig, KoshiPlugin, KoshiContext, PluginConfig } from '../types.js'
+import type { KoshiConfig, KoshiContext, KoshiPlugin } from '../types.js'
 
 /**
  * Validate that an imported module looks like a KoshiPlugin.
@@ -18,11 +18,22 @@ function validatePlugin(mod: unknown, ref: string): KoshiPlugin {
   return plugin as unknown as KoshiPlugin
 }
 
+// Built-in plugins bundled with Koshi
+const BUILTIN_PLUGINS: Record<string, string> = {
+  '@koshi/anthropic': '../plugins/anthropic/index.js',
+  '@koshi/autotest': '../plugins/autotest/index.js',
+  '@koshi/tui': '../tui/plugin.js',
+  '@koshi/memory': '../plugins/memory/index.js',
+}
+
 /**
- * Resolve an import specifier — local paths get resolved to absolute,
- * npm package names are used as-is.
+ * Resolve an import specifier — built-ins map to local paths,
+ * local paths get resolved to absolute, npm package names are used as-is.
  */
 function resolveSpecifier(name: string): string {
+  if (BUILTIN_PLUGINS[name]) {
+    return BUILTIN_PLUGINS[name]
+  }
   if (name.startsWith('.') || name.startsWith('/')) {
     return resolve(name)
   }
@@ -34,12 +45,12 @@ function resolveSpecifier(name: string): string {
  * Plugins are loaded in order, validated, and init() is called sequentially.
  * Shutdown hooks are registered on the Fastify instance in reverse order.
  */
-export async function loadPlugins(
-  config: KoshiConfig,
-  context: KoshiContext
-): Promise<KoshiPlugin[]> {
+export async function loadPlugins(config: KoshiConfig, context: KoshiContext): Promise<KoshiPlugin[]> {
   const plugins: KoshiPlugin[] = []
-  const fastify = context.fastify as { log: { info: (...args: unknown[]) => void; error: (...args: unknown[]) => void }; addHook: (hook: string, fn: () => Promise<void>) => void }
+  const fastify = context.fastify as {
+    log: { info: (...args: unknown[]) => void; error: (...args: unknown[]) => void }
+    addHook: (hook: string, fn: () => Promise<void>) => void
+  }
 
   for (const pluginConfig of config.plugins) {
     const ref = pluginConfig.name

@@ -1,15 +1,25 @@
-import Database from 'better-sqlite3'
-import { Session, SessionMessage } from '../types.js'
+import type Database from 'better-sqlite3'
+import type { Session, SessionMessage } from '../types.js'
 
 export function createSessionManager(db: Database.Database) {
   const stmts = {
     insertSession: db.prepare('INSERT INTO sessions (id, model, type, created_at, updated_at) VALUES (?, ?, ?, ?, ?)'),
-    getSession: db.prepare('SELECT id, created_at as createdAt, updated_at as updatedAt, model, type FROM sessions WHERE id = ?'),
+    getSession: db.prepare(
+      'SELECT id, created_at as createdAt, updated_at as updatedAt, model, type FROM sessions WHERE id = ?',
+    ),
     touchSession: db.prepare('UPDATE sessions SET updated_at = ? WHERE id = ?'),
-    insertMessage: db.prepare('INSERT INTO messages (session_id, role, content, tool_calls, created_at) VALUES (?, ?, ?, ?, ?)'),
-    getHistory: db.prepare('SELECT role, content, tool_calls as toolCalls, created_at as createdAt FROM messages WHERE session_id = ? ORDER BY created_at ASC'),
-    getHistoryLimit: db.prepare('SELECT role, content, tool_calls as toolCalls, created_at as createdAt FROM messages WHERE session_id = ? ORDER BY created_at ASC LIMIT ?'),
-    pruneMessages: db.prepare('DELETE FROM messages WHERE session_id = ? AND id NOT IN (SELECT id FROM messages WHERE session_id = ? ORDER BY created_at DESC LIMIT ?)'),
+    insertMessage: db.prepare(
+      'INSERT INTO messages (session_id, role, content, tool_calls, created_at) VALUES (?, ?, ?, ?, ?)',
+    ),
+    getHistory: db.prepare(
+      'SELECT role, content, tool_calls as toolCalls, created_at as createdAt FROM messages WHERE session_id = ? ORDER BY created_at ASC',
+    ),
+    getHistoryLimit: db.prepare(
+      'SELECT role, content, tool_calls as toolCalls, created_at as createdAt FROM messages WHERE session_id = ? ORDER BY created_at ASC LIMIT ?',
+    ),
+    pruneMessages: db.prepare(
+      'DELETE FROM messages WHERE session_id = ? AND id NOT IN (SELECT id FROM messages WHERE session_id = ? ORDER BY created_at DESC LIMIT ?)',
+    ),
   }
 
   return {
@@ -28,8 +38,8 @@ export function createSessionManager(db: Database.Database) {
 
     getHistory(sessionId: string, limit?: number): SessionMessage[] {
       const rows = limit
-        ? stmts.getHistoryLimit.all(sessionId, limit) as Array<Record<string, unknown>>
-        : stmts.getHistory.all(sessionId) as Array<Record<string, unknown>>
+        ? (stmts.getHistoryLimit.all(sessionId, limit) as Array<Record<string, unknown>>)
+        : (stmts.getHistory.all(sessionId) as Array<Record<string, unknown>>)
       return rows.map((r) => ({
         role: r.role as SessionMessage['role'],
         content: r.content as string,

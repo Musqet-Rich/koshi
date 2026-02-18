@@ -1,5 +1,5 @@
-import Database from 'better-sqlite3'
-import type { Task, TaskRun, CreateTaskOptions, TaskFilter } from '../types.js'
+import type Database from 'better-sqlite3'
+import type { CreateTaskOptions, Task, TaskFilter, TaskRun } from '../types.js'
 
 const PRIORITY_ORDER: Record<string, number> = {
   critical: 4,
@@ -86,13 +86,28 @@ export function createTaskManager(db: Database.Database) {
       const conditions: string[] = []
       const params: Record<string, unknown> = {}
 
-      if (filter?.status) { conditions.push('status = @status'); params.status = filter.status }
-      if (filter?.priority) { conditions.push('priority = @priority'); params.priority = filter.priority }
-      if (filter?.project) { conditions.push('project = @project'); params.project = filter.project }
-      if (filter?.source) { conditions.push('source = @source'); params.source = filter.source }
+      if (filter?.status) {
+        conditions.push('status = @status')
+        params.status = filter.status
+      }
+      if (filter?.priority) {
+        conditions.push('priority = @priority')
+        params.priority = filter.priority
+      }
+      if (filter?.project) {
+        conditions.push('project = @project')
+        params.project = filter.project
+      }
+      if (filter?.source) {
+        conditions.push('source = @source')
+        params.source = filter.source
+      }
 
       const where = conditions.length ? `WHERE ${conditions.join(' AND ')}` : ''
-      const rows = db.prepare(`SELECT * FROM tasks ${where} ORDER BY created_at DESC`).all(params) as Record<string, unknown>[]
+      const rows = db.prepare(`SELECT * FROM tasks ${where} ORDER BY created_at DESC`).all(params) as Record<
+        string,
+        unknown
+      >[]
       return rows.map(rowToTask)
     },
 
@@ -101,16 +116,37 @@ export function createTaskManager(db: Database.Database) {
       return row ? rowToTask(row) : null
     },
 
-    update(id: number, changes: Partial<Pick<Task, 'status' | 'priority' | 'result' | 'agentRunId' | 'startedAt' | 'completedAt'>>): void {
+    update(
+      id: number,
+      changes: Partial<Pick<Task, 'status' | 'priority' | 'result' | 'agentRunId' | 'startedAt' | 'completedAt'>>,
+    ): void {
       const sets: string[] = []
       const params: Record<string, unknown> = { id }
 
-      if (changes.status !== undefined) { sets.push('status = @status'); params.status = changes.status }
-      if (changes.priority !== undefined) { sets.push('priority = @priority'); params.priority = changes.priority }
-      if (changes.result !== undefined) { sets.push('result = @result'); params.result = changes.result }
-      if (changes.agentRunId !== undefined) { sets.push('agent_run_id = @agent_run_id'); params.agent_run_id = changes.agentRunId }
-      if (changes.startedAt !== undefined) { sets.push('started_at = @started_at'); params.started_at = changes.startedAt }
-      if (changes.completedAt !== undefined) { sets.push('completed_at = @completed_at'); params.completed_at = changes.completedAt }
+      if (changes.status !== undefined) {
+        sets.push('status = @status')
+        params.status = changes.status
+      }
+      if (changes.priority !== undefined) {
+        sets.push('priority = @priority')
+        params.priority = changes.priority
+      }
+      if (changes.result !== undefined) {
+        sets.push('result = @result')
+        params.result = changes.result
+      }
+      if (changes.agentRunId !== undefined) {
+        sets.push('agent_run_id = @agent_run_id')
+        params.agent_run_id = changes.agentRunId
+      }
+      if (changes.startedAt !== undefined) {
+        sets.push('started_at = @started_at')
+        params.started_at = changes.startedAt
+      }
+      if (changes.completedAt !== undefined) {
+        sets.push('completed_at = @completed_at')
+        params.completed_at = changes.completedAt
+      }
 
       if (sets.length === 0) return
       db.prepare(`UPDATE tasks SET ${sets.join(', ')} WHERE id = @id`).run(params)
@@ -118,12 +154,15 @@ export function createTaskManager(db: Database.Database) {
 
     getReady(): Task[] {
       const rows = stmts.getReady.all() as Record<string, unknown>[]
-      return rows.sort((a, b) =>
-        (PRIORITY_ORDER[b.priority as string] ?? 2) - (PRIORITY_ORDER[a.priority as string] ?? 2)
-      ).map(rowToTask)
+      return rows
+        .sort((a, b) => (PRIORITY_ORDER[b.priority as string] ?? 2) - (PRIORITY_ORDER[a.priority as string] ?? 2))
+        .map(rowToTask)
     },
 
-    recordRun(taskId: number, run: { agent_run_id: string, template?: string, model?: string, status: string, result?: string, error?: string }): number {
+    recordRun(
+      taskId: number,
+      run: { agent_run_id: string; template?: string; model?: string; status: string; result?: string; error?: string },
+    ): number {
       const result = stmts.insertRun.run({
         task_id: taskId,
         agent_run_id: run.agent_run_id,

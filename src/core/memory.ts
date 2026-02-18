@@ -1,11 +1,21 @@
-import Database from 'better-sqlite3'
+import type Database from 'better-sqlite3'
 import type { MemoryResult } from '../types.js'
 import { expandSynonyms } from './synonyms.js'
+
+interface MemoryRow {
+  id: number
+  content: string
+  source: string | null
+  tags: string | null
+  score: number
+  created_at: string
+  bm25_rank: number
+}
 
 export function createMemory(db: Database.Database) {
   // Prepare statements
   const insertStmt = db.prepare(
-    `INSERT INTO memories (content, source, tags, session_id, score) VALUES (?, ?, ?, ?, 0)`
+    `INSERT INTO memories (content, source, tags, session_id, score) VALUES (?, ?, ?, ?, 0)`,
   )
 
   const matchStmt = db.prepare(
@@ -14,24 +24,20 @@ export function createMemory(db: Database.Database) {
      JOIN memories ON memories.id = memories_fts.rowid
      WHERE memories_fts MATCH ?
      ORDER BY memories_fts.rank
-     LIMIT ?`
+     LIMIT ?`,
   )
 
   const reinforceStmt = db.prepare(
-    `UPDATE memories SET score = score + ?, last_hit_at = CURRENT_TIMESTAMP WHERE id = ?`
+    `UPDATE memories SET score = score + ?, last_hit_at = CURRENT_TIMESTAMP WHERE id = ?`,
   )
 
-  const demoteStmt = db.prepare(
-    `UPDATE memories SET score = score - ? WHERE id = ?`
-  )
+  const demoteStmt = db.prepare(`UPDATE memories SET score = score - ? WHERE id = ?`)
 
   const deleteStmt = db.prepare(`DELETE FROM memories WHERE id = ?`)
 
   const countStmt = db.prepare(`SELECT COUNT(*) AS cnt FROM memories`)
 
-  const lowestStmt = db.prepare(
-    `SELECT id FROM memories ORDER BY score ASC LIMIT ?`
-  )
+  const lowestStmt = db.prepare(`SELECT id FROM memories ORDER BY score ASC LIMIT ?`)
 
   return {
     store(content: string, source?: string, tags?: string, sessionId?: string): number {
@@ -46,16 +52,16 @@ export function createMemory(db: Database.Database) {
 
       const ftsQuery = expandSynonyms(words.join(' '))
 
-      let rows: any[]
+      let rows: MemoryRow[]
       try {
-        rows = matchStmt.all(ftsQuery, limit * 3) as any[]
+        rows = matchStmt.all(ftsQuery, limit * 3) as MemoryRow[]
       } catch {
         return []
       }
 
       // Re-rank: BM25_relevance × (1 + max(score, 0)) × recency_factor
       const now = Date.now()
-      const scored = rows.map(row => {
+      const scored = rows.map((row) => {
         const bm25 = -row.bm25_rank // FTS5 rank is negative (lower = better)
         const scoreBoost = 1 + Math.max(row.score ?? 0, 0)
         const created = new Date(row.created_at).getTime()
@@ -94,7 +100,7 @@ export function createMemory(db: Database.Database) {
       const pruneCount = Math.floor(cnt * (prunePercent / 100))
       if (pruneCount <= 0) return 0
 
-      const ids = (lowestStmt.all(pruneCount) as { id: number }[]).map(r => r.id)
+      const ids = (lowestStmt.all(pruneCount) as { id: number }[]).map((r) => r.id)
       if (ids.length === 0) return 0
 
       const placeholders = ids.map(() => '?').join(',')

@@ -1,9 +1,8 @@
-import type { KoshiConfig, SpawnOptions, AgentResult, ToolCall, TokenUsage, SessionMessage } from '../types.js'
-import type { createSessionManager } from './sessions.js'
-import type { createPromptBuilder } from './prompt.js'
-import type { createMemory } from './memory.js'
 import type Database from 'better-sqlite3'
-import type { ModelPlugin } from '../types.js'
+import type { AgentResult, KoshiConfig, ModelPlugin, SessionMessage, SpawnOptions, TokenUsage } from '../types.js'
+import type { createMemory } from './memory.js'
+import type { createPromptBuilder } from './prompt.js'
+import type { createSessionManager } from './sessions.js'
 
 const MAX_ITERATIONS = 20
 
@@ -46,7 +45,9 @@ export function createAgentManager(opts: {
 
       // Timeout setup
       let timedOut = false
-      const timer = setTimeout(() => { timedOut = true }, timeout * 1000)
+      const timer = setTimeout(() => {
+        timedOut = true
+      }, timeout * 1000)
 
       try {
         // Create ephemeral session
@@ -68,9 +69,7 @@ export function createAgentManager(opts: {
         const model = getModel(modelName)
 
         // Build initial messages
-        const messages: SessionMessage[] = [
-          { role: 'user', content: systemPrompt },
-        ]
+        const messages: SessionMessage[] = [{ role: 'user', content: systemPrompt }]
 
         const totalUsage: TokenUsage = {
           inputTokens: 0,
@@ -86,11 +85,7 @@ export function createAgentManager(opts: {
           if (timedOut) {
             running.delete(agentRunId)
             clearTimeout(timer)
-            memory.store(
-              `Agent ${agentRunId} timed out on task: ${options.task}`,
-              'agent',
-              'agent,timeout',
-            )
+            memory.store(`Agent ${agentRunId} timed out on task: ${options.task}`, 'agent', 'agent,timeout')
             return { agentRunId, status: 'timed_out', usage: totalUsage }
           }
 
@@ -140,11 +135,7 @@ export function createAgentManager(opts: {
 
         // Store result as memory
         const summary = lastContent.slice(0, 500)
-        memory.store(
-          `Agent completed task: ${options.task}\nResult: ${summary}`,
-          'agent',
-          'agent,result',
-        )
+        memory.store(`Agent completed task: ${options.task}\nResult: ${summary}`, 'agent', 'agent,result')
 
         return {
           agentRunId,

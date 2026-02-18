@@ -1,9 +1,9 @@
 // WebSocket handler for TUI client connections
 
-import type { FastifyInstance } from 'fastify'
 import websocket from '@fastify/websocket'
+import type { FastifyInstance } from 'fastify'
 import type { WebSocket } from 'ws'
-import type { KoshiConfig, KoshiContext } from '../types.js'
+import type { KoshiConfig, KoshiContext, KoshiContextWithExtras } from '../types.js'
 import { createLogger } from './logger.js'
 
 const log = createLogger('ws')
@@ -83,14 +83,18 @@ export async function registerWebSocket(fastify: FastifyInstance, config: KoshiC
         if (msg.type === 'user_message') {
           log.debug('Received user_message', { content: msg.content?.slice(0, 80) })
           // Route to TUI channel plugin if available
-          const tuiChannel = tuiContext ? (tuiContext as any)._tuiChannel : null
-          if (tuiChannel && typeof tuiChannel.handleUserMessage === 'function') {
+          const tuiChannel = tuiContext
+            ? ((tuiContext as KoshiContextWithExtras)._tuiChannel as
+                | { handleUserMessage?: (msg: WsUserMessage) => void }
+                | undefined)
+            : null
+          if (tuiChannel?.handleUserMessage) {
             tuiChannel.handleUserMessage(msg)
           } else {
             log.warn('No TUI channel plugin registered — message not routed')
           }
         } else {
-          log.warn('Unknown WS message type', { type: (msg as any).type })
+          log.warn('Unknown WS message type', { type: (msg as unknown as Record<string, unknown>).type })
         }
       } catch (err) {
         log.warn('Invalid WS message', { error: err instanceof Error ? err.message : err })
