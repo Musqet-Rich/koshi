@@ -5,6 +5,11 @@ interface SkillRef {
   description: string
 }
 
+interface LoadedSkill {
+  name: string
+  content: string
+}
+
 export function createPromptBuilder(config: KoshiConfig) {
   let _skillIndex: SkillRef[] = []
 
@@ -15,7 +20,13 @@ export function createPromptBuilder(config: KoshiConfig) {
     },
 
     build(
-      opts: { memories?: MemoryResult[]; tools?: Tool[]; activeContext?: string; skillMatches?: SkillRef[] } = {},
+      opts: {
+        memories?: MemoryResult[]
+        tools?: Tool[]
+        activeContext?: string
+        skillMatches?: SkillRef[]
+        loadedSkills?: LoadedSkill[]
+      } = {},
     ): string {
       const sections: string[] = [config.identity.soul]
 
@@ -23,7 +34,7 @@ export function createPromptBuilder(config: KoshiConfig) {
       // Just reinforce that the model should use them.
       if (opts.tools && opts.tools.length > 0) {
         sections.push(
-          "## Tool Use\nYou have tools available via function calling. ALWAYS use them when asked to perform actions. Never describe what you would do — call the tool. For example, if asked to create a file, call spawn_agent with a clear task. If asked about past work, call memory_query. Act, don't narrate.\n\n## Memory\nUse memory_store to record facts, preferences, decisions, and context that will be relevant in future conversations. Store the who, where, why, how & when. Reinforce or demote memories based on their usefulness when they are recalled.",
+          "## Tool Use\nYou have tools available via function calling. ALWAYS use the right tool directly:\n- Reminders/scheduling → schedule_job, cancel_job, list_jobs\n- Memory → memory_store, memory_query\n- Skills → load_skill, create_skill, update_skill\n- Complex multi-step work → spawn_agent (only when simpler tools won't do)\n\nNever describe what you would do — call the tool. Act, don't narrate.\n\n## Memory\nUse memory_store to record facts, preferences, decisions, and context that will be relevant in future conversations. Store the who, where, why, how & when. Reinforce or demote memories based on their usefulness when they are recalled.",
         )
       }
 
@@ -44,8 +55,11 @@ export function createPromptBuilder(config: KoshiConfig) {
         )
       }
 
-      // Append matched skills hint
-      if (opts.skillMatches && opts.skillMatches.length > 0) {
+      // Auto-inject matched skill content directly into the prompt
+      if (opts.loadedSkills && opts.loadedSkills.length > 0) {
+        const skillSections = opts.loadedSkills.map((s) => `### ${s.name}\n${s.content}`).join('\n\n')
+        sections.push(`## Active Skills\n${skillSections}`)
+      } else if (opts.skillMatches && opts.skillMatches.length > 0) {
         const list = opts.skillMatches.map((s) => `${s.name}: ${s.description}`).join(', ')
         sections.push(
           `## Skill Hint\nThe following skills may be relevant to this request: ${list}. Use the \`load_skill\` tool to load the full instructions if needed.`,

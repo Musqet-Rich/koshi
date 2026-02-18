@@ -498,10 +498,18 @@ export function createMainLoop(opts: {
       // Build system prompt
       const allTools = [...MAIN_TOOLS, ...MEMORY_TOOLS, ...SKILL_TOOLS, ...CRON_TOOLS]
 
-      // Match skills against user message
+      // Match skills against user message and auto-load content
       const skillMatches = matchSkills(userContent)
+      const loadedSkills: { name: string; content: string }[] = []
+      if (skillMatches.length > 0) {
+        log.info('Skills matched', { matches: skillMatches.map((s) => s.name) })
+        for (const match of skillMatches) {
+          const content = getSkillContent(match.name)
+          if (content) loadedSkills.push({ name: match.name, content })
+        }
+      }
 
-      const systemPrompt = promptBuilder.build({ memories, tools: allTools, skillMatches })
+      const systemPrompt = promptBuilder.build({ memories, tools: allTools, skillMatches, loadedSkills })
 
       // Build messages for model
       const modelMessages: SessionMessage[] = [
