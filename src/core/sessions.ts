@@ -48,6 +48,10 @@ export function createSessionManager(db: Database.Database) {
       }))
     },
 
+    clearHistory(sessionId: string): void {
+      db.prepare('DELETE FROM messages WHERE session_id = ?').run(sessionId)
+    },
+
     pruneSession(sessionId: string, maxMessages: number): number {
       const result = stmts.pruneMessages.run(sessionId, sessionId, maxMessages)
       return result.changes

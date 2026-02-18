@@ -447,6 +447,15 @@ export function createMainLoop(opts: {
       const userContent = batch.messages.map((m) => m.payload).join('\n')
       if (!userContent.trim()) return
 
+      // Slash commands — handled before model call
+      if (userContent.trim() === '/clear') {
+        sessionManager.clearHistory(MAIN_SESSION_ID)
+        const ch = getChannel(batch.channel)
+        if (ch) await ch.send(batch.conversation, { content: '🧹 Session cleared.', streaming: false })
+        log.info('Session cleared by user')
+        return
+      }
+
       const tickStart = Date.now()
       const contextLimit = getContextLimit(config.agent.model, config.agent.contextLimit)
 
