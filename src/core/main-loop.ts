@@ -95,11 +95,12 @@ const MAIN_TOOLS: Tool[] = [
 const MEMORY_TOOLS: Tool[] = [
   {
     name: 'memory_query',
-    description: 'Search your memory for relevant information. Returns ranked results.',
+    description:
+      'Search your memory for relevant information. Extract key nouns and synonyms from the user\'s question — do NOT pass the raw question. Example: user asks "what do you know about my pets?" → query "pets dog cat animal". Strip filler words (what, do, you, about, my, the, etc). Include synonyms for better recall.',
     inputSchema: {
       type: 'object',
       properties: {
-        query: { type: 'string', description: 'Search query — keywords work best' },
+        query: { type: 'string', description: 'Keywords and synonyms only — no filler words or punctuation' },
         limit: { type: 'number', description: 'Max results to return (default 5)' },
       },
       required: ['query'],
