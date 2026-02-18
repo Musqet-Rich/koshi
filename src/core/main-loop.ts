@@ -294,7 +294,7 @@ function executeTool(
       const limit = (input.limit as number) ?? 5
       const results = memory.query(query, limit)
       if (results.length === 0) return 'No memories found.'
-      return results.map((r) => `[id:${r.id}] ${r.content}${r.tags ? ` (tags: ${r.tags})` : ''}`).join('\n')
+      return `From memory:\n${results.map((r) => `- [id:${r.id}] ${r.content}${r.tags ? ` (tags: ${r.tags})` : ''}`).join('\n')}`
     }
     case 'memory_store': {
       const content = input.content as string
