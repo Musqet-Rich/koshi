@@ -599,6 +599,48 @@ export function createMainLoop(opts: {
         sessionManager.addMessage(MAIN_SESSION_ID, 'assistant', fullContent)
       }
 
+      // Post-response memory extraction — cheap background call
+      if (userContent && fullContent) {
+        const recentExchange = `User: ${userContent}\nAssistant: ${fullContent}`
+        const extractPrompt = `You are a memory extraction system. Given this conversation exchange, extract any facts, decisions, preferences, or context worth remembering for future conversations. Include who, what, when, why, how.
+
+If there is NOTHING worth storing (casual chat, greetings, trivial exchanges), respond with exactly: NOTHING
+
+Otherwise respond with a JSON array of objects: [{"content": "fact to remember", "source": "conversation"}]
+
+Exchange:
+${recentExchange.slice(0, 2000)}`
+        try {
+          const subModel = config.agent.subAgentModel
+            ? getModel(config.agent.subAgentModel)
+            : getModel(modelName)
+          const extractResult = await subModel.complete(
+            [{ role: 'system', content: extractPrompt }],
+            [],
+          )
+          const body = extractResult.content?.trim() ?? ''
+          if (body && body !== 'NOTHING') {
+            try {
+              const items = JSON.parse(body) as { content: string; source?: string }[]
+              for (const item of items) {
+                memory.store(item.content, item.source ?? 'conversation')
+              }
+              if (items.length > 0) {
+                log.info('Memory extracted', { count: items.length })
+              }
+            } catch {
+              // Model didn't return valid JSON — store as single memory if it looks useful
+              if (body.length > 20 && body.length < 500) {
+                memory.store(body, 'conversation')
+                log.info('Memory extracted', { count: 1, raw: true })
+              }
+            }
+          }
+        } catch (err) {
+          log.warn('Memory extraction failed', { error: err instanceof Error ? err.message : String(err) })
+        }
+      }
+
       emitActivity('idle', { contextTokens, contextPercent })
       flushNotifications()
       log.info('Response sent', { channel: replyChannel, length: fullContent.length })
