@@ -159,14 +159,29 @@ function executeTool(
         .spawn({ task, model, timeout })
         .then((result) => {
           log.info('Sub-agent finished', { runId: result.agentRunId.slice(0, 8), status: result.status })
-          const summary = result.result?.slice(0, 300) ?? result.error ?? ''
-          notifyTui(`🤖 Sub-agent [${result.agentRunId.slice(0, 8)}] ${result.status}${summary ? `: ${summary}` : ''}`)
-          // Also inject into session history so the model knows about it
-          sessionManager?.addMessage(
-            MAIN_SESSION_ID,
-            'assistant',
-            `[System] Sub-agent ${result.agentRunId.slice(0, 8)} ${result.status}: ${summary}`,
-          )
+          const summary = result.result?.slice(0, 500) ?? result.error ?? ''
+          const notification = `🤖 Sub-agent [${result.agentRunId.slice(0, 8)}] ${result.status}${summary ? `: ${summary}` : ''}`
+          // Show notification immediately in TUI
+          notifyTui(notification)
+          // Inject into router so the model can respond to it contextually
+          if (router) {
+            router.push({
+              channel: 'tui',
+              conversation: 'tui',
+              messages: [
+                {
+                  id: Date.now(),
+                  channel: 'tui',
+                  sender: 'system',
+                  conversation: 'tui',
+                  payload: `[Sub-agent completed] ${summary}`,
+                  receivedAt: new Date().toISOString(),
+                  priority: 5,
+                  routed: true,
+                },
+              ],
+            })
+          }
         })
         .catch((err) => {
           const error = err instanceof Error ? err.message : String(err)

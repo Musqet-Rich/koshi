@@ -55,6 +55,24 @@ function extractToolCalls(content: Anthropic.ContentBlock[]): ToolCall[] {
     .map((b) => ({ id: b.id, name: b.name, input: b.input as Record<string, unknown> }))
 }
 
+const MAX_RETRIES = 3
+const RETRY_DELAYS = [1000, 3000, 8000]
+
+async function withRetry<T>(fn: () => Promise<T>): Promise<T> {
+  for (let attempt = 0; attempt <= MAX_RETRIES; attempt++) {
+    try {
+      return await fn()
+    } catch (err) {
+      const isRetryable =
+        err instanceof Error && (err.message.includes('529') || err.message.includes('overloaded') || err.message.includes('500'))
+      if (!isRetryable || attempt === MAX_RETRIES) throw err
+      const delay = RETRY_DELAYS[attempt] ?? 8000
+      await new Promise((r) => setTimeout(r, delay))
+    }
+  }
+  throw new Error('Unreachable')
+}
+
 export function createAnthropicClient(apiKey: string) {
   const client = new Anthropic({ apiKey })
 
@@ -74,7 +92,7 @@ export function createAnthropicClient(apiKey: string) {
         ...(opts.tools?.length && { tools: mapTools(opts.tools) }),
       }
 
-      const response = await client.messages.create(params)
+      const response = await withRetry(() => client.messages.create(params))
 
       const text = response.content
         .filter((b): b is Anthropic.TextBlock => b.type === 'text')
