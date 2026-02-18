@@ -168,7 +168,7 @@ export async function main(): Promise<void> {
 
   // 13. Start Fastify
   const host = '0.0.0.0'
-  const port = 3100
+  const port = 3200
   try {
     await fastify.listen({ host, port })
     log.info(`Server listening on ${host}:${port}`)

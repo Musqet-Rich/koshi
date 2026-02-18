@@ -33,7 +33,12 @@ function write(level: LogLevel, component: string, message: string, extra?: Reco
     message,
     ...extra,
   }
-  process.stdout.write(`${JSON.stringify(entry)}\n`)
+  try {
+    process.stdout.write(`${JSON.stringify(entry)}\n`)
+  } catch {
+    // Fallback for circular structures (e.g. Fastify request objects)
+    process.stdout.write(`${JSON.stringify({ level, timestamp: entry.timestamp, component, message })}\n`)
+  }
 }
 
 export function createLogger(component: string): Logger {
@@ -75,8 +80,17 @@ function fastifyLog(
     logger[level](msgOrObj)
   } else if (typeof msgOrObj === 'object' && msgOrObj !== null) {
     const msg = typeof args[0] === 'string' ? args[0] : ''
-    const { msg: _m, message: _msg, ...extra } = msgOrObj as Record<string, unknown>
-    logger[level](msg || (_m as string) || (_msg as string) || '', extra)
+    const obj = msgOrObj as Record<string, unknown>
+    const msg2 = msg || (obj.msg as string) || (obj.message as string) || ''
+    // Only extract simple serialisable keys — skip request/response objects
+    const extra: Record<string, unknown> = {}
+    for (const [k, v] of Object.entries(obj)) {
+      if (k === 'msg' || k === 'message') continue
+      if (typeof v === 'string' || typeof v === 'number' || typeof v === 'boolean' || v === null) {
+        extra[k] = v
+      }
+    }
+    logger[level](msg2, Object.keys(extra).length > 0 ? extra : undefined)
   }
 }
 

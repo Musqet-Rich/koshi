@@ -32,10 +32,14 @@ const plugin: KoshiPlugin = {
 
       const modelPlugin: ModelPlugin = {
         async complete(messages: SessionMessage[], tools?: Tool[]): Promise<ModelResponse> {
+          const systemMsgs = messages.filter(m => m.role === 'system')
+          const nonSystemMsgs = messages.filter(m => m.role !== 'system')
+          const system = systemMsgs.map(m => m.content).join('\n\n') || undefined
           const response = await modelClient.complete({
             model: modelConfig.model,
-            messages,
+            messages: nonSystemMsgs,
             tools,
+            system,
           })
           if (response.usage) await recordUsage(koshi, response.usage)
           return response
@@ -43,7 +47,10 @@ const plugin: KoshiPlugin = {
 
         async *stream(messages: SessionMessage[], tools?: Tool[]): AsyncIterable<StreamChunk> {
           let usage: TokenUsage | undefined
-          for await (const chunk of modelClient.stream({ model: modelConfig.model, messages, tools })) {
+          const systemMsgs = messages.filter(m => m.role === 'system')
+          const nonSystemMsgs = messages.filter(m => m.role !== 'system')
+          const system = systemMsgs.map(m => m.content).join('\n\n') || undefined
+          for await (const chunk of modelClient.stream({ model: modelConfig.model, messages: nonSystemMsgs, tools, system })) {
             if (chunk.type === 'usage') {
               usage = chunk.usage
             }

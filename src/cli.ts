@@ -50,7 +50,7 @@ if (command === 'start') {
   const { main } = await import('./core/index.js')
   await main()
 } else if (command === 'tui') {
-  const portArg = args[1] ?? '3000'
+  const portArg = args[1] ?? '3200'
   const port = parseInt(portArg, 10)
   const { startTui } = await import('./tui/index.js')
   startTui(port)
