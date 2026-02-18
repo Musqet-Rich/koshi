@@ -323,7 +323,10 @@ export function createMainLoop(opts: {
       emitActivity('idle')
       log.info('Response sent', { channel: replyChannel, length: fullContent.length })
     } catch (err) {
-      log.error('Main loop error', { error: err instanceof Error ? err.message : err })
+      const errorMsg = err instanceof Error ? err.message : String(err)
+      log.error('Main loop error', { error: errorMsg })
+      // Show error to user in TUI
+      notifyTui(`⚠️ Error: ${errorMsg.slice(0, 300)}`)
       broadcast({
         type: 'activity',
         state: 'idle',
