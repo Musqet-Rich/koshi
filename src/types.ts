@@ -37,6 +37,7 @@ export interface KoshiConfig {
     defaultTimeout?: number
   }
   dataPath?: string
+  skillsPath?: string
   logLevel?: 'debug' | 'info' | 'warn' | 'error'
 }
 

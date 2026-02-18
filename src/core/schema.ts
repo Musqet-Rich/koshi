@@ -107,6 +107,15 @@ CREATE INDEX IF NOT EXISTS idx_buffer_unrouted ON buffer(routed, priority DESC, 
 CREATE INDEX IF NOT EXISTS idx_buffer_conversation ON buffer(conversation, received_at);
 CREATE INDEX IF NOT EXISTS idx_buffer_retention ON buffer(routed, received_at);
 
+CREATE TABLE IF NOT EXISTS skills (
+  name TEXT PRIMARY KEY,
+  description TEXT NOT NULL,
+  triggers TEXT NOT NULL DEFAULT '[]',
+  content TEXT NOT NULL,
+  created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+  updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
+);
+
 CREATE TABLE IF NOT EXISTS token_usage (
   id INTEGER PRIMARY KEY,
   agent_run_id TEXT,

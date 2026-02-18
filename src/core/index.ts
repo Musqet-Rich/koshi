@@ -56,8 +56,11 @@ export async function main(): Promise<void> {
   const sessionManager = createSessionManager(db)
   const promptBuilder = createPromptBuilder(config)
 
-  // Load skills
-  const skillIndex = loadSkillIndex()
+  // Load skills — human files from external dir, agent skills from DB
+  const homeDir = process.env.HOME ?? process.env.USERPROFILE ?? '.'
+  const externalSkillsDir = resolve(config.skillsPath ?? `${homeDir}/.config/koshi/skills`)
+  const repoSkillsDir = resolve('skills')
+  const skillIndex = loadSkillIndex(externalSkillsDir, repoSkillsDir, db)
   promptBuilder.setSkillIndex(skillIndex)
 
   const _taskManager = createTaskManager(db)

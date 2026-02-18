@@ -8,7 +8,7 @@ import type { createMemory } from './memory.js'
 import type { createPromptBuilder } from './prompt.js'
 import type { createRouter } from './router.js'
 import type { createSessionManager } from './sessions.js'
-import { getSkillContent, matchSkills } from './skills.js'
+import { createSkill, getSkillContent, matchSkills, updateSkill } from './skills.js'
 import type { WsActivityUpdate } from './ws.js'
 import { broadcast } from './ws.js'
 
@@ -156,6 +156,43 @@ const SKILL_TOOLS: Tool[] = [
       required: ['name'],
     },
   },
+  {
+    name: 'create_skill',
+    description:
+      'Create a new skill to teach yourself how to handle a recurring pattern. Skills are reusable recipes that get loaded when relevant triggers match.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        name: { type: 'string', description: 'Short kebab-case identifier (e.g. "code-review")' },
+        description: { type: 'string', description: 'One sentence explaining what the skill covers' },
+        triggers: {
+          type: 'array',
+          items: { type: 'string' },
+          description: 'Keywords/phrases that should activate this skill',
+        },
+        content: { type: 'string', description: 'Full recipe in markdown' },
+      },
+      required: ['name', 'description', 'triggers', 'content'],
+    },
+  },
+  {
+    name: 'update_skill',
+    description: 'Update an existing agent-created skill. Cannot modify file-based (human-managed) skills.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        name: { type: 'string', description: 'Skill name to update' },
+        description: { type: 'string', description: 'New description' },
+        triggers: {
+          type: 'array',
+          items: { type: 'string' },
+          description: 'New triggers array',
+        },
+        content: { type: 'string', description: 'New content' },
+      },
+      required: ['name'],
+    },
+  },
 ]
 
 // ─── Tool Execution ──────────────────────────────────────────────────────────
@@ -189,6 +226,30 @@ function executeTool(
       const skillName = input.name as string
       const content = getSkillContent(skillName)
       return content ?? `Skill "${skillName}" not found.`
+    }
+    case 'create_skill': {
+      try {
+        return createSkill({
+          name: input.name as string,
+          description: input.description as string,
+          triggers: input.triggers as string[],
+          content: input.content as string,
+        })
+      } catch (err) {
+        return `Error: ${err instanceof Error ? err.message : String(err)}`
+      }
+    }
+    case 'update_skill': {
+      try {
+        return updateSkill({
+          name: input.name as string,
+          description: input.description as string | undefined,
+          triggers: input.triggers as string[] | undefined,
+          content: input.content as string | undefined,
+        })
+      } catch (err) {
+        return `Error: ${err instanceof Error ? err.message : String(err)}`
+      }
     }
     case 'memory_query': {
       const query = input.query as string
