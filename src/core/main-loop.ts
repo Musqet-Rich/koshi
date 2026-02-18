@@ -18,7 +18,7 @@ const MAX_TOOL_ROUNDS = 10
 const MAIN_TOOLS: Tool[] = [
   {
     name: 'spawn_agent',
-    description: 'Spawn a background sub-agent to do work. It runs independently and stores its result in memory when done. Use for anything that takes effort: research, file operations, coding, analysis. You will NOT get the result immediately — it runs in the background. Check memory later for results.',
+    description: 'Spawn a background sub-agent to do work. It runs independently — has shell access (exec), memory, and web access (via curl). Stores results in memory when done. You will NOT get the result immediately — check memory or list_agents later.',
     inputSchema: {
       type: 'object',
       properties: {
@@ -27,6 +27,14 @@ const MAIN_TOOLS: Tool[] = [
         timeout: { type: 'number', description: 'Timeout in seconds (default 300)' },
       },
       required: ['task'],
+    },
+  },
+  {
+    name: 'list_agents',
+    description: 'List running and recently completed sub-agents with their status.',
+    inputSchema: {
+      type: 'object',
+      properties: {},
     },
   },
 ]
@@ -120,15 +128,35 @@ function executeTool(
       const model = input.model as string | undefined
       const timeout = input.timeout as number | undefined
       if (!agentManager) return 'Agent manager not available'
-      // Fire and forget — agent runs in background
       const runId = crypto.randomUUID()
       agentManager.spawn({ task, model, timeout }).then((result) => {
-        log.info('Sub-agent completed', { runId: result.agentRunId, status: result.status })
-        // Result is already stored in memory by the agent manager
+        log.info('Sub-agent finished', { runId: result.agentRunId.slice(0, 8), status: result.status })
       }).catch((err) => {
-        log.error('Sub-agent error', { runId, error: err instanceof Error ? err.message : String(err) })
+        log.error('Sub-agent error', { runId: runId.slice(0, 8), error: err instanceof Error ? err.message : String(err) })
       })
-      return `Agent spawned (run: ${runId.slice(0, 8)}). It will run in the background and store results in memory when done.`
+      return `Agent spawned (run: ${runId.slice(0, 8)}). It has shell access and will store results in memory when done.`
+    }
+    case 'list_agents': {
+      if (!agentManager) return 'Agent manager not available'
+      const running = agentManager.getRunning()
+      const completed = agentManager.getCompleted(5)
+      const lines: string[] = []
+      if (running.length > 0) {
+        lines.push('Running:')
+        for (const a of running) {
+          const elapsed = Math.round((Date.now() - a.startedAt) / 1000)
+          lines.push(`  [${a.id.slice(0, 8)}] ${a.task} (${elapsed}s, ${a.model})`)
+        }
+      } else {
+        lines.push('No agents currently running.')
+      }
+      if (completed.length > 0) {
+        lines.push('Recent:')
+        for (const a of completed) {
+          lines.push(`  [${a.id.slice(0, 8)}] ${a.task} — ${a.status}`)
+        }
+      }
+      return lines.join('\n')
     }
     default:
       return `Unknown tool: ${name}`
