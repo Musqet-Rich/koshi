@@ -39,6 +39,9 @@ export interface KoshiConfig {
   dataPath?: string
   skillsPath?: string
   logLevel?: 'debug' | 'info' | 'warn' | 'error'
+  debug?: {
+    logPrompts?: boolean
+  }
 }
 
 export interface ModelConfig {

@@ -511,6 +511,16 @@ export function createMainLoop(opts: {
 
       const systemPrompt = promptBuilder.build({ memories, tools: allTools, skillMatches, loadedSkills })
 
+      // Log prompt if debug enabled
+      if (config.debug?.logPrompts) {
+        const { mkdirSync, writeFileSync } = await import('node:fs')
+        const dir = '/tmp/koshi-prompts'
+        mkdirSync(dir, { recursive: true })
+        const ts = new Date().toISOString().replace(/[:.]/g, '-')
+        writeFileSync(`${dir}/${ts}.md`, systemPrompt, 'utf-8')
+        log.info('Prompt logged', { path: `${dir}/${ts}.md` })
+      }
+
       // Build messages for model
       const modelMessages: SessionMessage[] = [
         { role: 'system', content: systemPrompt },
