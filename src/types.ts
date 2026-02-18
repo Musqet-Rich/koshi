@@ -9,6 +9,8 @@ export interface KoshiConfig {
   agent: {
     model: string
     subAgentModel?: string
+    contextLimit?: number
+    compactionThreshold?: number
   }
   plugins: PluginConfig[]
   routes: RouteRule[]

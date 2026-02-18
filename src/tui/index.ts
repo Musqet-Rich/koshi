@@ -13,6 +13,10 @@ interface Activity {
   session?: string
   tokensIn?: number
   tokensOut?: number
+  costUsd?: number
+  contextTokens?: number
+  contextLimit?: number
+  contextPercent?: number
   agents?: number
 }
 
@@ -74,12 +78,32 @@ export function startTui(port = 3200): void {
     return `${m}m ${s}s`
   }
 
+  const formatTokenCount = (n: number): string => {
+    if (n >= 1_000_000) return `${(n / 1_000_000).toFixed(1)}M`
+    if (n >= 1_000) return `${(n / 1_000).toFixed(1)}k`
+    return String(n)
+  }
+
   const buildStatusSuffix = () => {
     const parts: string[] = []
     parts.push(connected ? 'connected' : 'disconnected')
     parts.push(serverName)
     if (activity.session) parts.push(`session:${activity.session}`)
     if (activity.model) parts.push(activity.model)
+    // Context window usage
+    if (activity.contextTokens && activity.contextLimit) {
+      parts.push(
+        `tokens ${formatTokenCount(activity.contextTokens)}/${formatTokenCount(activity.contextLimit)} (${activity.contextPercent ?? 0}%)`,
+      )
+    } else if (activity.tokensIn || activity.tokensOut) {
+      // Cumulative session tokens when no context info
+      const total = (activity.tokensIn ?? 0) + (activity.tokensOut ?? 0)
+      parts.push(`${formatTokenCount(total)} tokens`)
+    }
+    // Cost
+    if (activity.costUsd && activity.costUsd > 0) {
+      parts.push(`$${activity.costUsd.toFixed(2)}`)
+    }
     if (activity.agents) parts.push(`${activity.agents} agent${activity.agents > 1 ? 's' : ''}`)
     return parts.join(' | ')
   }
@@ -217,6 +241,10 @@ export function startTui(port = 3200): void {
             session: msg.session,
             tokensIn: msg.tokensIn,
             tokensOut: msg.tokensOut,
+            costUsd: msg.costUsd,
+            contextTokens: msg.contextTokens,
+            contextLimit: msg.contextLimit,
+            contextPercent: msg.contextPercent,
             agents: msg.agents,
           }
           renderStatus()

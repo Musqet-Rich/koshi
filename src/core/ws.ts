@@ -43,6 +43,10 @@ export interface WsActivityUpdate {
   session?: string
   tokensIn?: number
   tokensOut?: number
+  costUsd?: number
+  contextTokens?: number
+  contextLimit?: number
+  contextPercent?: number
   agents?: number
 }
 

@@ -2,6 +2,7 @@
 
 import type { ChannelPlugin, KoshiConfig, ModelPlugin, SessionMessage, Tool, ToolCall } from '../types.js'
 import type { createAgentManager } from './agents.js'
+import { compactSession, estimateMessagesChars } from './compaction.js'
 import { createLogger } from './logger.js'
 import type { createMemory } from './memory.js'
 import type { createPromptBuilder } from './prompt.js'
@@ -30,6 +31,22 @@ function flushNotifications(): void {
 
 const MAIN_SESSION_ID = 'main'
 const MAX_TOOL_ROUNDS = 10
+
+// Context limits by model name fragment
+const MODEL_CONTEXT_LIMITS: Record<string, number> = {
+  'claude-opus-4': 200_000,
+  'claude-sonnet-4': 200_000,
+  'claude-haiku-4': 200_000,
+  'claude-haiku-3': 200_000,
+}
+
+function getContextLimit(modelName: string, configOverride?: number): number {
+  if (configOverride) return configOverride
+  for (const [fragment, limit] of Object.entries(MODEL_CONTEXT_LIMITS)) {
+    if (modelName.includes(fragment)) return limit
+  }
+  return 200_000 // sensible default
+}
 
 // ─── Tool Definitions ────────────────────────────────────────────────────────
 
@@ -258,6 +275,9 @@ export function createMainLoop(opts: {
   const { config, router, getModel, sessionManager, promptBuilder, memory, agentManager, getChannel } = opts
   let timer: ReturnType<typeof setInterval> | null = null
   let processing = false
+  let sessionTokensIn = 0
+  let sessionTokensOut = 0
+  let sessionCostUsd = 0
 
   // Ensure main session exists
   try {
@@ -282,6 +302,8 @@ export function createMainLoop(opts: {
       if (!userContent.trim()) return
 
       const tickStart = Date.now()
+      const contextLimit = getContextLimit(config.agent.model, config.agent.contextLimit)
+
       const emitActivity = (state: WsActivityUpdate['state'], extra?: Partial<WsActivityUpdate>) => {
         broadcast({
           type: 'activity',
@@ -289,6 +311,10 @@ export function createMainLoop(opts: {
           model: config.agent.model,
           session: MAIN_SESSION_ID,
           elapsed: Math.round((Date.now() - tickStart) / 1000),
+          tokensIn: sessionTokensIn,
+          tokensOut: sessionTokensOut,
+          costUsd: sessionCostUsd,
+          contextLimit,
           agents: agentManager.getRunningCount(),
           ...extra,
         })
@@ -299,6 +325,23 @@ export function createMainLoop(opts: {
 
       // Store user message in session
       sessionManager.addMessage(MAIN_SESSION_ID, 'user', userContent)
+
+      // Check if compaction is needed before getting history
+      const compactionThreshold = config.agent.compactionThreshold ?? 0.7
+      const preHistory = sessionManager.getHistory(MAIN_SESSION_ID)
+      const preChars = estimateMessagesChars(preHistory)
+      const preContextTokens = Math.ceil(preChars / 4)
+      if (preContextTokens / contextLimit > compactionThreshold && preHistory.length > 4) {
+        log.info('Context usage high, compacting', { tokens: preContextTokens, limit: contextLimit })
+        const modelName = config.agent.model
+        const compactionModel = getModel(modelName)
+        await compactSession({
+          sessionManager,
+          model: compactionModel,
+          sessionId: MAIN_SESSION_ID,
+          targetTokens: Math.floor(contextLimit * 0.5),
+        })
+      }
 
       // Get session history
       const history = sessionManager.getHistory(MAIN_SESSION_ID)
@@ -316,6 +359,12 @@ export function createMainLoop(opts: {
         ...history.map((m) => ({ role: m.role, content: m.content })),
       ]
 
+      // Estimate context usage
+      const contextChars = estimateMessagesChars(modelMessages)
+      const contextTokens = Math.ceil(contextChars / 4)
+      const contextPercent = Math.round((contextTokens / contextLimit) * 100)
+      emitActivity('thinking', { contextTokens, contextPercent })
+
       // Get the model and channel
       const modelName = config.agent.model
       const model = getModel(modelName)
@@ -327,6 +376,13 @@ export function createMainLoop(opts: {
 
       for (let round = 0; round < MAX_TOOL_ROUNDS; round++) {
         const response = await model.complete(modelMessages, allTools)
+
+        // Track cumulative token usage
+        if (response.usage) {
+          sessionTokensIn += response.usage.inputTokens
+          sessionTokensOut += response.usage.outputTokens
+          sessionCostUsd += response.usage.costUsd ?? 0
+        }
 
         if (response.content) {
           fullContent += response.content
@@ -375,7 +431,7 @@ export function createMainLoop(opts: {
         sessionManager.addMessage(MAIN_SESSION_ID, 'assistant', fullContent)
       }
 
-      emitActivity('idle')
+      emitActivity('idle', { contextTokens, contextPercent })
       flushNotifications()
       log.info('Response sent', { channel: replyChannel, length: fullContent.length })
     } catch (err) {
@@ -388,6 +444,9 @@ export function createMainLoop(opts: {
         state: 'idle',
         model: config.agent.model,
         session: MAIN_SESSION_ID,
+        tokensIn: sessionTokensIn,
+        tokensOut: sessionTokensOut,
+        costUsd: sessionCostUsd,
         agents: agentManager.getRunningCount(),
       })
       flushNotifications()

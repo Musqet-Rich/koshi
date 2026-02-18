@@ -64,7 +64,8 @@ async function withRetry<T>(fn: () => Promise<T>): Promise<T> {
       return await fn()
     } catch (err) {
       const isRetryable =
-        err instanceof Error && (err.message.includes('529') || err.message.includes('overloaded') || err.message.includes('500'))
+        err instanceof Error &&
+        (err.message.includes('529') || err.message.includes('overloaded') || err.message.includes('500'))
       if (!isRetryable || attempt === MAX_RETRIES) throw err
       const delay = RETRY_DELAYS[attempt] ?? 8000
       await new Promise((r) => setTimeout(r, delay))
