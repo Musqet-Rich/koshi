@@ -616,7 +616,9 @@ export function createMainLoop(opts: {
         // Query memory for similar past tasks to include in extraction prompt
         let priorTasks = ''
         try {
-          const taskMemories = memory.query(userContent, 3)
+          // Use only first 200 chars of user message for task pattern matching
+          const taskQuery = userContent.slice(0, 200)
+          const taskMemories = memory.query(taskQuery, 3)
           if (taskMemories.length > 0) {
             priorTasks = `\n\nPrior related memories (check for repeated patterns):\n${taskMemories.map((m) => `- ${m.content}`).join('\n')}`
           }
