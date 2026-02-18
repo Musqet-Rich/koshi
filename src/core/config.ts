@@ -94,6 +94,7 @@ export function loadConfig(path?: string): KoshiConfig {
     dataPath: doc.dataPath ?? doc.data ?? './data',
     skillsPath: doc.skillsPath ?? doc.skills?.path,
     logLevel: doc.logLevel ?? 'info',
+    debug: doc.debug,
   }
 
   return config
