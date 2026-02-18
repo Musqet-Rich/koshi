@@ -609,14 +609,46 @@ export function createMainLoop(opts: {
         sessionManager.addMessage(MAIN_SESSION_ID, 'assistant', fullContent)
       }
 
-      // Post-response memory extraction — cheap background call
+      // Post-response memory extraction + pattern detection — cheap background call
       if (userContent && fullContent) {
         const recentExchange = `User: ${userContent}\nAssistant: ${fullContent}`
-        const extractPrompt = `You are a memory extraction system. Given this conversation exchange, extract any facts, decisions, preferences, or context worth remembering for future conversations. Include who, what, when, why, how.
 
-If there is NOTHING worth storing (casual chat, greetings, trivial exchanges), respond with exactly: NOTHING
+        // Query memory for similar past tasks to include in extraction prompt
+        let priorTasks = ''
+        try {
+          const taskMemories = memory.query(userContent, 3)
+          if (taskMemories.length > 0) {
+            priorTasks = `\n\nPrior related memories (check for repeated patterns):\n${taskMemories.map((m) => `- ${m.content}`).join('\n')}`
+          }
+        } catch {
+          // ignore query failures
+        }
 
-Otherwise respond with a JSON array of objects: [{"content": "fact to remember", "source": "conversation"}]
+        const extractPrompt = `You are a memory and pattern extraction system. Given this conversation exchange, do TWO things:
+
+1. MEMORIES: Extract facts, decisions, preferences, task patterns, or context worth remembering. Include the TYPE of task performed (e.g. "Summarised a URL by spawning a sub-agent", "Set a reminder using schedule_job"). Always capture what was done and how.
+
+2. SKILL DETECTION: Check the prior related memories below. If you see the same type of task has been done 2+ times before (including this one), output a skill definition so the agent can handle it automatically next time.
+
+If there is NOTHING worth storing, respond with exactly: NOTHING
+
+Otherwise respond with JSON:
+{
+  "memories": [{"content": "fact or task pattern to remember", "source": "conversation"}],
+  "skill": null
+}
+
+If a repeated pattern is detected (3+ occurrences including this one), include a skill:
+{
+  "memories": [...],
+  "skill": {
+    "name": "kebab-case-name",
+    "description": "one sentence describing what this skill handles",
+    "triggers": ["keyword1", "keyword2", "keyword3"],
+    "content": "Step-by-step instructions for how to handle this task type. Be specific and actionable."
+  }
+}
+${priorTasks}
 
 Exchange:
 ${recentExchange.slice(0, 2000)}`
@@ -631,15 +663,35 @@ ${recentExchange.slice(0, 2000)}`
           const body = extractResult.content?.trim() ?? ''
           if (body && body !== 'NOTHING') {
             try {
-              const items = JSON.parse(body) as { content: string; source?: string }[]
-              for (const item of items) {
-                memory.store(item.content, item.source ?? 'conversation')
+              const parsed = JSON.parse(body) as {
+                memories?: { content: string; source?: string }[]
+                skill?: { name: string; description: string; triggers: string[]; content: string } | null
               }
-              if (items.length > 0) {
-                log.info('Memory extracted', { count: items.length })
+
+              // Store memories
+              if (parsed.memories) {
+                for (const item of parsed.memories) {
+                  memory.store(item.content, item.source ?? 'conversation')
+                }
+                if (parsed.memories.length > 0) {
+                  log.info('Memory extracted', { count: parsed.memories.length })
+                }
+              }
+
+              // Create skill if pattern detected
+              if (parsed.skill) {
+                try {
+                  createSkill(parsed.skill)
+                  log.info('Skill auto-created from pattern', { name: parsed.skill.name })
+                } catch (err) {
+                  log.warn('Skill auto-creation failed', {
+                    name: parsed.skill.name,
+                    error: err instanceof Error ? err.message : String(err),
+                  })
+                }
               }
             } catch {
-              // Model didn't return valid JSON — only store if it looks like a real fact (not JSON/code/NOTHING)
+              // Model didn't return valid JSON — only store if it looks like a real fact
               const isGarbage =
                 body.startsWith('NOTHING') ||
                 body.startsWith('```') ||
