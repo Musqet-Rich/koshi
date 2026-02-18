@@ -56,7 +56,7 @@ const MAIN_TOOLS: Tool[] = [
   {
     name: 'spawn_agent',
     description:
-      'Spawn a background sub-agent to do work. It runs independently with shell access, memory, file writing, and web access (via curl). You will be notified automatically when it completes — the result will appear as a system message. For large outputs, the agent writes files to /tmp/koshi-agent/ which you can read with read_file.',
+      'Spawn a background sub-agent for complex multi-step work requiring shell access or file operations. ONLY use when simpler tools cannot do the job. DO NOT use for reminders, scheduling, or cron — use schedule_job instead. DO NOT use for memory — use memory_store/memory_query. DO NOT use for skills — use load_skill/create_skill.',
     inputSchema: {
       type: 'object',
       properties: {

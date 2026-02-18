@@ -30,6 +30,9 @@ export function createPromptBuilder(config: KoshiConfig) {
     ): string {
       const sections: string[] = [config.identity.soul]
 
+      // Current time — essential for scheduling
+      sections.push(`## Current Time\n${new Date().toISOString()} (UTC)`)
+
       // Tools are passed via the API's native tool mechanism — don't list them in the prompt.
       // Just reinforce that the model should use them.
       if (opts.tools && opts.tools.length > 0) {
