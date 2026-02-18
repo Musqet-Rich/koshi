@@ -136,7 +136,9 @@ export function App({ port, session }: Props) {
         <Text dimColor>session:{session}</Text>
         {streaming && <Text color="cyan"> ▍</Text>}
       </Box>
-      <Box><Text dimColor>{separator}</Text></Box>
+      <Box>
+        <Text dimColor>{separator}</Text>
+      </Box>
 
       {/* Messages — fixed height, bottom-aligned */}
       <Box flexDirection="column" height={chatHeight} overflow="hidden">
@@ -144,7 +146,8 @@ export function App({ port, session }: Props) {
           {visible.map((msg, i) => (
             <Box key={`${msg.role}-${i}-${msg.content.length}`} paddingBottom={i < visible.length - 1 ? 0 : 0}>
               <Text wrap="wrap" color={msg.role === 'user' ? 'blue' : 'white'}>
-                {msg.role === 'user' ? '> ' : '  '}{msg.content}
+                {msg.role === 'user' ? '> ' : '  '}
+                {msg.content}
               </Text>
             </Box>
           ))}
@@ -152,7 +155,9 @@ export function App({ port, session }: Props) {
       </Box>
 
       {/* Input area */}
-      <Box><Text dimColor>{separator}</Text></Box>
+      <Box>
+        <Text dimColor>{separator}</Text>
+      </Box>
       <Box>
         <Text color="blue">&gt; </Text>
         <TextInput value={input} onChange={setInput} onSubmit={handleSubmit} />

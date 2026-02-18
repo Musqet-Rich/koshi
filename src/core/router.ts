@@ -100,6 +100,10 @@ export function createRouter(config: KoshiConfig, buffer: ReturnType<typeof crea
       return mainQueue.shift() ?? null
     },
 
+    push(batch: MessageBatch): void {
+      mainQueue.push(batch)
+    },
+
     getSpawnIntents(): SpawnIntent[] {
       return spawnIntents.splice(0)
     },

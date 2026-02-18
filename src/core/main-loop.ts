@@ -18,11 +18,15 @@ const MAX_TOOL_ROUNDS = 10
 const MAIN_TOOLS: Tool[] = [
   {
     name: 'spawn_agent',
-    description: 'Spawn a background sub-agent to do work. It runs independently — has shell access (exec), memory, and web access (via curl). Stores results in memory when done. You will NOT get the result immediately — check memory or list_agents later.',
+    description:
+      'Spawn a background sub-agent to do work. It runs independently — has shell access (exec), memory, and web access (via curl). Stores results in memory when done. You will NOT get the result immediately — check memory or list_agents later.',
     inputSchema: {
       type: 'object',
       properties: {
-        task: { type: 'string', description: 'Clear description of what the agent should do. Be specific — it has no conversation context.' },
+        task: {
+          type: 'string',
+          description: 'Clear description of what the agent should do. Be specific — it has no conversation context.',
+        },
         model: { type: 'string', description: 'Model to use (optional, defaults to config)' },
         timeout: { type: 'number', description: 'Timeout in seconds (default 300)' },
       },
@@ -54,7 +58,8 @@ const MEMORY_TOOLS: Tool[] = [
   },
   {
     name: 'memory_store',
-    description: 'Store something in long-term memory. Use for facts, preferences, or anything worth remembering across conversations.',
+    description:
+      'Store something in long-term memory. Use for facts, preferences, or anything worth remembering across conversations.',
     inputSchema: {
       type: 'object',
       properties: {
@@ -66,7 +71,8 @@ const MEMORY_TOOLS: Tool[] = [
   },
   {
     name: 'memory_reinforce',
-    description: 'Mark a memory as useful — increases its ranking in future searches. Call this when a recalled memory was helpful.',
+    description:
+      'Mark a memory as useful — increases its ranking in future searches. Call this when a recalled memory was helpful.',
     inputSchema: {
       type: 'object',
       properties: {
@@ -77,7 +83,8 @@ const MEMORY_TOOLS: Tool[] = [
   },
   {
     name: 'memory_demote',
-    description: 'Mark a memory as less useful — decreases its ranking. Call this when a recalled memory was irrelevant or outdated.',
+    description:
+      'Mark a memory as less useful — decreases its ranking. Call this when a recalled memory was irrelevant or outdated.',
     inputSchema: {
       type: 'object',
       properties: {
@@ -94,6 +101,8 @@ function executeTool(
   toolCall: ToolCall,
   memory: ReturnType<typeof createMemory>,
   agentManager?: ReturnType<typeof createAgentManager>,
+  router?: ReturnType<typeof createRouter>,
+  batch?: { channel: string; conversation: string },
 ): string {
   const { name, input } = toolCall
 
@@ -103,9 +112,7 @@ function executeTool(
       const limit = (input.limit as number) ?? 5
       const results = memory.query(query, limit)
       if (results.length === 0) return 'No memories found.'
-      return results
-        .map((r) => `[id:${r.id}] ${r.content}${r.tags ? ` (tags: ${r.tags})` : ''}`)
-        .join('\n')
+      return results.map((r) => `[id:${r.id}] ${r.content}${r.tags ? ` (tags: ${r.tags})` : ''}`).join('\n')
     }
     case 'memory_store': {
       const content = input.content as string
@@ -129,11 +136,35 @@ function executeTool(
       const timeout = input.timeout as number | undefined
       if (!agentManager) return 'Agent manager not available'
       const runId = crypto.randomUUID()
-      agentManager.spawn({ task, model, timeout }).then((result) => {
-        log.info('Sub-agent finished', { runId: result.agentRunId.slice(0, 8), status: result.status })
-      }).catch((err) => {
-        log.error('Sub-agent error', { runId: runId.slice(0, 8), error: err instanceof Error ? err.message : String(err) })
-      })
+      agentManager
+        .spawn({ task, model, timeout })
+        .then((result) => {
+          log.info('Sub-agent finished', { runId: result.agentRunId.slice(0, 8), status: result.status })
+          if (router && batch) {
+            router.push({
+              channel: batch.channel,
+              conversation: batch.conversation,
+              messages: [
+                {
+                  id: Date.now(),
+                  channel: batch.channel,
+                  sender: 'system',
+                  conversation: batch.conversation,
+                  payload: `🤖 Sub-agent [${result.agentRunId.slice(0, 8)}] ${result.status}${result.result ? `: ${result.result.slice(0, 200)}` : result.error ? `: ${result.error}` : ''}`,
+                  receivedAt: new Date().toISOString(),
+                  priority: 10,
+                  routed: true,
+                },
+              ],
+            })
+          }
+        })
+        .catch((err) => {
+          log.error('Sub-agent error', {
+            runId: runId.slice(0, 8),
+            error: err instanceof Error ? err.message : String(err),
+          })
+        })
       return `Agent spawned (run: ${runId.slice(0, 8)}). It has shell access and will store results in memory when done.`
     }
     case 'list_agents': {
@@ -240,7 +271,10 @@ export function createMainLoop(opts: {
           break
         }
 
-        log.info('Tool calls', { count: response.toolCalls.length, tools: response.toolCalls.map((t) => t.name).join(', ') })
+        log.info('Tool calls', {
+          count: response.toolCalls.length,
+          tools: response.toolCalls.map((t) => t.name).join(', '),
+        })
 
         // Add assistant message with tool calls to conversation
         modelMessages.push({
@@ -251,7 +285,7 @@ export function createMainLoop(opts: {
 
         // Execute each tool and add results
         for (const tc of response.toolCalls) {
-          const result = executeTool(tc, memory, agentManager)
+          const result = executeTool(tc, memory, agentManager, router, batch)
           log.info('Tool result', { tool: tc.name, resultLength: result.length })
           modelMessages.push({
             role: 'tool',

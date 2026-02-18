@@ -1,7 +1,16 @@
 import { exec as execCb } from 'node:child_process'
 import { promisify } from 'node:util'
 import type Database from 'better-sqlite3'
-import type { AgentResult, KoshiConfig, ModelPlugin, SessionMessage, SpawnOptions, TokenUsage, Tool, ToolCall } from '../types.js'
+import type {
+  AgentResult,
+  KoshiConfig,
+  ModelPlugin,
+  SessionMessage,
+  SpawnOptions,
+  TokenUsage,
+  Tool,
+  ToolCall,
+} from '../types.js'
 import { createLogger } from './logger.js'
 import type { createMemory } from './memory.js'
 import type { createPromptBuilder } from './prompt.js'
@@ -18,7 +27,8 @@ const MAX_OUTPUT_CHARS = 10_000
 const SUBAGENT_TOOLS: Tool[] = [
   {
     name: 'exec',
-    description: 'Execute a shell command. Use for web requests (curl), file operations, code execution, etc. Commands run in a sandboxed workspace. Timeout: 30s.',
+    description:
+      'Execute a shell command. Use for web requests (curl), file operations, code execution, etc. Commands run in a sandboxed workspace. Timeout: 30s.',
     inputSchema: {
       type: 'object',
       properties: {
@@ -185,7 +195,12 @@ export function createAgentManager(opts: {
           if (timedOut) {
             running.delete(agentRunId)
             clearTimeout(timer)
-            completed.push({ id: agentRunId, task: options.task.slice(0, 100), status: 'timed_out', completedAt: Date.now() })
+            completed.push({
+              id: agentRunId,
+              task: options.task.slice(0, 100),
+              status: 'timed_out',
+              completedAt: Date.now(),
+            })
             memory.store(`Agent ${agentRunId.slice(0, 8)} timed out on task: ${options.task}`, 'agent', 'agent,timeout')
             return { agentRunId, status: 'timed_out', usage: totalUsage }
           }
@@ -199,11 +214,19 @@ export function createAgentManager(opts: {
 
           lastContent = response.content ?? ''
 
-          sessionManager.addMessage(sessionId, 'assistant', response.content ?? '', response.toolCalls ? JSON.stringify(response.toolCalls) : undefined)
+          sessionManager.addMessage(
+            sessionId,
+            'assistant',
+            response.content ?? '',
+            response.toolCalls ? JSON.stringify(response.toolCalls) : undefined,
+          )
 
           if (!response.toolCalls || response.toolCalls.length === 0) break
 
-          log.info('Sub-agent tool calls', { runId: agentRunId.slice(0, 8), tools: response.toolCalls.map((t) => t.name).join(', ') })
+          log.info('Sub-agent tool calls', {
+            runId: agentRunId.slice(0, 8),
+            tools: response.toolCalls.map((t) => t.name).join(', '),
+          })
 
           // Add assistant message with tool calls
           messages.push({
@@ -215,7 +238,11 @@ export function createAgentManager(opts: {
           // Execute tools and add results
           for (const tc of response.toolCalls) {
             const result = await executeSubagentTool(tc, memory, workspacePath)
-            log.info('Sub-agent tool result', { runId: agentRunId.slice(0, 8), tool: tc.name, resultLength: result.length })
+            log.info('Sub-agent tool result', {
+              runId: agentRunId.slice(0, 8),
+              tool: tc.name,
+              resultLength: result.length,
+            })
             messages.push({
               role: 'tool',
               content: result,
@@ -226,7 +253,12 @@ export function createAgentManager(opts: {
 
         clearTimeout(timer)
         running.delete(agentRunId)
-        completed.push({ id: agentRunId, task: options.task.slice(0, 100), status: 'completed', completedAt: Date.now() })
+        completed.push({
+          id: agentRunId,
+          task: options.task.slice(0, 100),
+          status: 'completed',
+          completedAt: Date.now(),
+        })
 
         const summary = lastContent.slice(0, 500)
         memory.store(`Agent completed task: ${options.task}\nResult: ${summary}`, 'agent', 'agent,result')
