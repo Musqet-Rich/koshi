@@ -1,7 +1,7 @@
 import { Box, Text, useApp, useInput, useStdout } from 'ink'
-import TextInput from 'ink-text-input'
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import WebSocket from 'ws'
+import { MultiLineInput } from './MultiLineInput.js'
 
 interface Message {
   role: 'user' | 'assistant'
@@ -41,8 +41,9 @@ export function App({ port, session }: Props) {
   const rows = stdout?.rows ?? 24
   const cols = stdout?.columns ?? 80
 
-  // Reserve: 1 status + 1 separator + 1 separator + 1 input = 4 lines
-  const chatHeight = Math.max(rows - 4, 3)
+  // Reserve: 1 status + 1 separator + 1 separator + input lines
+  const inputLineCount = Math.max(1, input.split('\n').length)
+  const chatHeight = Math.max(rows - 3 - inputLineCount, 3)
 
   useEffect(() => {
     const ws = new WebSocket(`ws://localhost:${port}/ws/tui`)
@@ -160,7 +161,7 @@ export function App({ port, session }: Props) {
       </Box>
       <Box>
         <Text color="blue">&gt; </Text>
-        <TextInput value={input} onChange={setInput} onSubmit={handleSubmit} />
+        <MultiLineInput value={input} onChange={setInput} onSubmit={handleSubmit} />
       </Box>
     </Box>
   )
