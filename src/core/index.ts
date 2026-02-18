@@ -131,7 +131,7 @@ export async function main(): Promise<void> {
   }
 
   // 9. Initialize agent manager
-  const _agentManager = createAgentManager({
+  const agentManager = createAgentManager({
     config,
     getModel,
     sessionManager,
@@ -152,6 +152,7 @@ export async function main(): Promise<void> {
     sessionManager,
     promptBuilder,
     memory,
+    agentManager,
     getChannel: (name: string) => channelMap.get(name),
   })
   mainLoop.start()

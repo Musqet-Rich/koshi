@@ -1,6 +1,7 @@
 // Main agent loop — polls router for batches, sends to model, routes responses back
 
 import type { ChannelPlugin, KoshiConfig, ModelPlugin, SessionMessage, Tool, ToolCall } from '../types.js'
+import type { createAgentManager } from './agents.js'
 import { createLogger } from './logger.js'
 import type { createMemory } from './memory.js'
 import type { createPromptBuilder } from './prompt.js'
@@ -13,6 +14,22 @@ const MAIN_SESSION_ID = 'main'
 const MAX_TOOL_ROUNDS = 10
 
 // ─── Tool Definitions ────────────────────────────────────────────────────────
+
+const MAIN_TOOLS: Tool[] = [
+  {
+    name: 'spawn_agent',
+    description: 'Spawn a background sub-agent to do work. It runs independently and stores its result in memory when done. Use for anything that takes effort: research, file operations, coding, analysis. You will NOT get the result immediately — it runs in the background. Check memory later for results.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        task: { type: 'string', description: 'Clear description of what the agent should do. Be specific — it has no conversation context.' },
+        model: { type: 'string', description: 'Model to use (optional, defaults to config)' },
+        timeout: { type: 'number', description: 'Timeout in seconds (default 300)' },
+      },
+      required: ['task'],
+    },
+  },
+]
 
 const MEMORY_TOOLS: Tool[] = [
   {
@@ -68,6 +85,7 @@ const MEMORY_TOOLS: Tool[] = [
 function executeTool(
   toolCall: ToolCall,
   memory: ReturnType<typeof createMemory>,
+  agentManager?: ReturnType<typeof createAgentManager>,
 ): string {
   const { name, input } = toolCall
 
@@ -97,6 +115,21 @@ function executeTool(
       memory.demote(id)
       return `Demoted memory #${id}`
     }
+    case 'spawn_agent': {
+      const task = input.task as string
+      const model = input.model as string | undefined
+      const timeout = input.timeout as number | undefined
+      if (!agentManager) return 'Agent manager not available'
+      // Fire and forget — agent runs in background
+      const runId = crypto.randomUUID()
+      agentManager.spawn({ task, model, timeout }).then((result) => {
+        log.info('Sub-agent completed', { runId: result.agentRunId, status: result.status })
+        // Result is already stored in memory by the agent manager
+      }).catch((err) => {
+        log.error('Sub-agent error', { runId, error: err instanceof Error ? err.message : String(err) })
+      })
+      return `Agent spawned (run: ${runId.slice(0, 8)}). It will run in the background and store results in memory when done.`
+    }
     default:
       return `Unknown tool: ${name}`
   }
@@ -111,9 +144,10 @@ export function createMainLoop(opts: {
   sessionManager: ReturnType<typeof createSessionManager>
   promptBuilder: ReturnType<typeof createPromptBuilder>
   memory: ReturnType<typeof createMemory>
+  agentManager: ReturnType<typeof createAgentManager>
   getChannel: (name: string) => ChannelPlugin | undefined
 }) {
-  const { config, router, getModel, sessionManager, promptBuilder, memory, getChannel } = opts
+  const { config, router, getModel, sessionManager, promptBuilder, memory, agentManager, getChannel } = opts
   let timer: ReturnType<typeof setInterval> | null = null
   let processing = false
 
@@ -148,7 +182,8 @@ export function createMainLoop(opts: {
       const memories = memory.query(userContent, 5)
 
       // Build system prompt
-      const systemPrompt = promptBuilder.build({ memories, tools: MEMORY_TOOLS })
+      const allTools = [...MAIN_TOOLS, ...MEMORY_TOOLS]
+      const systemPrompt = promptBuilder.build({ memories, tools: allTools })
 
       // Build messages for model
       const modelMessages: SessionMessage[] = [
@@ -166,7 +201,7 @@ export function createMainLoop(opts: {
       let fullContent = ''
 
       for (let round = 0; round < MAX_TOOL_ROUNDS; round++) {
-        const response = await model.complete(modelMessages, MEMORY_TOOLS)
+        const response = await model.complete(modelMessages, allTools)
 
         if (response.content) {
           fullContent += response.content
@@ -188,7 +223,7 @@ export function createMainLoop(opts: {
 
         // Execute each tool and add results
         for (const tc of response.toolCalls) {
-          const result = executeTool(tc, memory)
+          const result = executeTool(tc, memory, agentManager)
           log.info('Tool result', { tool: tc.name, resultLength: result.length })
           modelMessages.push({
             role: 'tool',
