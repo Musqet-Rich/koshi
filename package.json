@@ -1,0 +1,27 @@
+{
+  "name": "koshi",
+  "version": "0.0.1",
+  "type": "module",
+  "license": "GPL-3.0",
+  "bin": {
+    "koshi": "dist/cli.js"
+  },
+  "scripts": {
+    "build": "tsc",
+    "dev": "tsx src/core/index.ts",
+    "start": "node dist/core/index.js"
+  },
+  "dependencies": {
+    "@anthropic-ai/sdk": "^0.39.0",
+    "better-sqlite3": "^11.0.0",
+    "croner": "^9.0.0",
+    "fastify": "^5.0.0",
+    "yaml": "^2.7.0"
+  },
+  "devDependencies": {
+    "@types/better-sqlite3": "^7.6.0",
+    "@types/node": "^22.0.0",
+    "tsx": "^4.0.0",
+    "typescript": "^5.7.0"
+  }
+}
