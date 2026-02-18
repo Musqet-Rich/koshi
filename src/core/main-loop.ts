@@ -12,9 +12,20 @@ import { broadcast } from './ws.js'
 
 const log = createLogger('main-loop')
 
-/** Send a system notification directly to the TUI (bypasses the model) */
+/** Pending notifications — delivered after current model response completes */
+const pendingNotifications: string[] = []
+
+/** Queue a system notification for delivery after the current tick */
 function notifyTui(text: string): void {
-  broadcast({ type: 'assistant_done', content: text })
+  pendingNotifications.push(text)
+}
+
+/** Flush all pending notifications to the TUI */
+function flushNotifications(): void {
+  while (pendingNotifications.length > 0) {
+    const text = pendingNotifications.shift()
+    if (text) broadcast({ type: 'assistant_done', content: text })
+  }
 }
 
 const MAIN_SESSION_ID = 'main'
@@ -215,6 +226,9 @@ export function createMainLoop(opts: {
   }
 
   async function tick(): Promise<void> {
+    // Flush any notifications that arrived while idle
+    if (!processing) flushNotifications()
+
     if (processing) return
     processing = true
 
@@ -321,12 +335,13 @@ export function createMainLoop(opts: {
       }
 
       emitActivity('idle')
+      flushNotifications()
       log.info('Response sent', { channel: replyChannel, length: fullContent.length })
     } catch (err) {
       const errorMsg = err instanceof Error ? err.message : String(err)
       log.error('Main loop error', { error: errorMsg })
-      // Show error to user in TUI
-      notifyTui(`⚠️ Error: ${errorMsg.slice(0, 300)}`)
+      // Show error to user in TUI — flush immediately since there's no response to wait for
+      broadcast({ type: 'assistant_done', content: `⚠️ Error: ${errorMsg.slice(0, 300)}` })
       broadcast({
         type: 'activity',
         state: 'idle',
@@ -334,6 +349,7 @@ export function createMainLoop(opts: {
         session: MAIN_SESSION_ID,
         agents: agentManager.getRunningCount(),
       })
+      flushNotifications()
     } finally {
       processing = false
     }
