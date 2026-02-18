@@ -8,6 +8,7 @@ export interface KoshiConfig {
   models: Record<string, ModelConfig>
   agent: {
     model: string
+    subAgentModel?: string
   }
   plugins: PluginConfig[]
   routes: RouteRule[]

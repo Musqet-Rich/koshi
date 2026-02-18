@@ -152,7 +152,7 @@ export function createAgentManager(opts: {
       }
 
       const agentRunId = crypto.randomUUID()
-      const modelName = options.model ?? config.agent.model
+      const modelName = options.model ?? config.agent.subAgentModel ?? config.agent.model
       const timeout = options.timeout ?? config.agents?.defaultTimeout ?? 300
 
       running.set(agentRunId, {

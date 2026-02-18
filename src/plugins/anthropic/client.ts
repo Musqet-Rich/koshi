@@ -5,6 +5,7 @@ import type { ModelResponse, SessionMessage, StreamChunk, TokenUsage, Tool, Tool
 const MODEL_COSTS: Record<string, [number, number]> = {
   'claude-opus-4-20250514': [15, 75],
   'claude-sonnet-4-20250514': [3, 15],
+  'claude-haiku-4-5-20251001': [1, 5],
   'claude-haiku-3-20250307': [0.25, 1.25],
 }
 
