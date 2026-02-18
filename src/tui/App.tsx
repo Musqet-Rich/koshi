@@ -51,6 +51,7 @@ export function App({ port, session }: Props) {
   const [streaming, setStreaming] = useState(false)
   const [activity, setActivity] = useState<Activity>({ state: 'idle' })
   const [spinnerIdx, setSpinnerIdx] = useState(0)
+  const [scrollOffset, setScrollOffset] = useState(0)
   const wsRef = useRef<WebSocket | null>(null)
 
   const rows = stdout?.rows ?? 24
@@ -138,18 +139,35 @@ export function App({ port, session }: Props) {
     [status, session],
   )
 
-  // Calculate which messages fit in the chat area (bottom-up)
+  // Reset scroll when new messages arrive
+  const messageCount = messages.length
+  // biome-ignore lint/correctness/useExhaustiveDependencies: intentional trigger on message count change
+  useEffect(() => {
+    setScrollOffset(0)
+  }, [messageCount])
+
+  // Calculate visible messages with scroll support
   const visible = useMemo(() => {
+    // First, calculate total rows for all messages
+    const allRows: Array<{ msg: Message; idx: number; rows: number }> = []
+    for (let i = 0; i < messages.length; i++) {
+      const prev = i > 0 ? messages[i - 1] : undefined
+      const gap = prev && prev.role !== messages[i].role ? 1 : 0
+      allRows.push({ msg: messages[i], idx: i, rows: messageRows(messages[i], cols) + gap })
+    }
+
+    // Work backwards from (end - scrollOffset)
+    const endIdx = messages.length - scrollOffset
     let usedRows = 0
     const result: Message[] = []
-    for (let i = messages.length - 1; i >= 0; i--) {
-      const needed = messageRows(messages[i], cols) + 1 // +1 for gap between messages
+    for (let i = endIdx - 1; i >= 0; i--) {
+      const needed = allRows[i].rows
       if (usedRows + needed > chatHeight && result.length > 0) break
-      result.unshift(messages[i])
+      result.unshift(allRows[i].msg)
       usedRows += needed
     }
     return result
-  }, [messages, chatHeight, cols])
+  }, [messages, chatHeight, cols, scrollOffset])
 
   const statusColor = status === 'connected' ? 'green' : status === 'connecting' ? 'yellow' : 'red'
   const separator = '─'.repeat(Math.min(cols, 120))
@@ -192,6 +210,7 @@ export function App({ port, session }: Props) {
       {/* Status bar — between messages and input */}
       <Box>
         <Text dimColor>{separator}</Text>
+        {scrollOffset > 0 && <Text color="yellow"> ↑ {scrollOffset} more</Text>}
       </Box>
       <Box>
         <Text color={spinnerColor}>
@@ -213,7 +232,14 @@ export function App({ port, session }: Props) {
       </Box>
       <Box>
         <Text color="blue">&gt; </Text>
-        <MultiLineInput value={input} onChange={setInput} onSubmit={handleSubmit} onExit={exit} />
+        <MultiLineInput
+          value={input}
+          onChange={setInput}
+          onSubmit={handleSubmit}
+          onExit={exit}
+          onScrollUp={() => setScrollOffset((o) => Math.min(o + 5, Math.max(0, messages.length - 1)))}
+          onScrollDown={() => setScrollOffset((o) => Math.max(0, o - 5))}
+        />
       </Box>
     </Box>
   )

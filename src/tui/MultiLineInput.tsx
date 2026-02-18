@@ -6,10 +6,12 @@ interface Props {
   onChange: (value: string) => void
   onSubmit: (value: string) => void
   onExit?: () => void
+  onScrollUp?: () => void
+  onScrollDown?: () => void
   focus?: boolean
 }
 
-export function MultiLineInput({ value, onChange, onSubmit, onExit, focus = true }: Props) {
+export function MultiLineInput({ value, onChange, onSubmit, onExit, onScrollUp, onScrollDown, focus = true }: Props) {
   const { stdin, setRawMode } = useStdin()
   const [cursorVisible, setCursorVisible] = useState(true)
 
@@ -22,6 +24,10 @@ export function MultiLineInput({ value, onChange, onSubmit, onExit, focus = true
   onSubmitRef.current = onSubmit
   const onExitRef = useRef(onExit)
   onExitRef.current = onExit
+  const onScrollUpRef = useRef(onScrollUp)
+  onScrollUpRef.current = onScrollUp
+  const onScrollDownRef = useRef(onScrollDown)
+  onScrollDownRef.current = onScrollDown
 
   // Blink cursor
   useEffect(() => {
@@ -90,7 +96,27 @@ export function MultiLineInput({ value, onChange, onSubmit, onExit, focus = true
       buf = ''
 
       const SHIFT_ENTER = '\x1b[27;2;13~'
+      const PAGE_UP = '\x1b[5~'
+      const PAGE_DOWN = '\x1b[6~'
       let val = valueRef.current
+
+      // Handle scroll keys
+      if (data.includes(PAGE_UP)) {
+        onScrollUpRef.current?.()
+        const cleaned = data.replaceAll(PAGE_UP, '')
+        if (!cleaned) return
+        buf = cleaned
+        flush()
+        return
+      }
+      if (data.includes(PAGE_DOWN)) {
+        onScrollDownRef.current?.()
+        const cleaned = data.replaceAll(PAGE_DOWN, '')
+        if (!cleaned) return
+        buf = cleaned
+        flush()
+        return
+      }
 
       if (data.includes(SHIFT_ENTER)) {
         const parts = data.split(SHIFT_ENTER)

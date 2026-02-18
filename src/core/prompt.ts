@@ -5,9 +5,11 @@ export function createPromptBuilder(config: KoshiConfig) {
     build(opts: { memories?: MemoryResult[]; tools?: Tool[]; activeContext?: string } = {}): string {
       const sections: string[] = [config.identity.soul]
 
+      // Tools are passed via the API's native tool mechanism — don't list them in the prompt.
+      // Just reinforce that the model should use them.
       if (opts.tools && opts.tools.length > 0) {
         sections.push(
-          `## Tools\nYou have tools available. USE THEM — don't describe what you would do, actually do it by calling the tools. When asked to perform actions (create files, search, spawn agents, etc.), call the appropriate tool immediately.\n\n${opts.tools.map((t) => `- **${t.name}**: ${t.description}`).join('\n')}`,
+          "## Tool Use\nYou have tools available via function calling. ALWAYS use them when asked to perform actions. Never describe what you would do — call the tool. For example, if asked to create a file, call spawn_agent with a clear task. If asked about past work, call memory_query. Act, don't narrate.",
         )
       }
 

@@ -12,6 +12,11 @@ import { broadcast } from './ws.js'
 
 const log = createLogger('main-loop')
 
+/** Send a system notification directly to the TUI (bypasses the model) */
+function notifyTui(text: string): void {
+  broadcast({ type: 'assistant_done', content: text })
+}
+
 const MAIN_SESSION_ID = 'main'
 const MAX_TOOL_ROUNDS = 10
 
@@ -105,6 +110,7 @@ function executeTool(
   agentManager?: ReturnType<typeof createAgentManager>,
   router?: ReturnType<typeof createRouter>,
   batch?: { channel: string; conversation: string },
+  sessionManager?: ReturnType<typeof createSessionManager>,
 ): string {
   const { name, input } = toolCall
 
@@ -142,32 +148,21 @@ function executeTool(
         .spawn({ task, model, timeout })
         .then((result) => {
           log.info('Sub-agent finished', { runId: result.agentRunId.slice(0, 8), status: result.status })
-          if (router && batch) {
-            router.push({
-              channel: batch.channel,
-              conversation: batch.conversation,
-              messages: [
-                {
-                  id: Date.now(),
-                  channel: batch.channel,
-                  sender: 'system',
-                  conversation: batch.conversation,
-                  payload: `🤖 Sub-agent [${result.agentRunId.slice(0, 8)}] ${result.status}${result.result ? `: ${result.result.slice(0, 200)}` : result.error ? `: ${result.error}` : ''}`,
-                  receivedAt: new Date().toISOString(),
-                  priority: 10,
-                  routed: true,
-                },
-              ],
-            })
-          }
+          const summary = result.result?.slice(0, 300) ?? result.error ?? ''
+          notifyTui(`🤖 Sub-agent [${result.agentRunId.slice(0, 8)}] ${result.status}${summary ? `: ${summary}` : ''}`)
+          // Also inject into session history so the model knows about it
+          sessionManager?.addMessage(
+            MAIN_SESSION_ID,
+            'assistant',
+            `[System] Sub-agent ${result.agentRunId.slice(0, 8)} ${result.status}: ${summary}`,
+          )
         })
         .catch((err) => {
-          log.error('Sub-agent error', {
-            runId: runId.slice(0, 8),
-            error: err instanceof Error ? err.message : String(err),
-          })
+          const error = err instanceof Error ? err.message : String(err)
+          log.error('Sub-agent error', { runId: runId.slice(0, 8), error })
+          notifyTui(`🤖 Sub-agent [${runId.slice(0, 8)}] failed: ${error}`)
         })
-      return `Agent spawned (run: ${runId.slice(0, 8)}). It has shell access and will store results in memory when done.`
+      return `Agent spawned (run: ${runId.slice(0, 8)}). It will notify you when done.`
     }
     case 'list_agents': {
       if (!agentManager) return 'Agent manager not available'
@@ -302,7 +297,7 @@ export function createMainLoop(opts: {
 
         // Execute each tool and add results
         for (const tc of response.toolCalls) {
-          const result = executeTool(tc, memory, agentManager, router, batch)
+          const result = executeTool(tc, memory, agentManager, router, batch, sessionManager)
           log.info('Tool result', { tool: tc.name, resultLength: result.length })
           modelMessages.push({
             role: 'tool',
