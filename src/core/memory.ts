@@ -49,11 +49,13 @@ export function createMemory(db: Database.Database) {
     },
 
     query(queryString: string, limit = 20): MemoryResult[] {
-      // Expand each word via synonym map, join with OR
-      const words = queryString.trim().split(/\s+/).filter(Boolean)
+      // Strip punctuation and FTS5-special chars, then split into words
+      const cleaned = queryString.replace(/[?!.,;:'"()\[\]{}<>*^~@#$%&|\\]/g, ' ')
+      const words = cleaned.trim().split(/\s+/).filter((w) => w.length > 1)
       if (words.length === 0) return []
 
-      const ftsQuery = expandSynonyms(words.join(' '))
+      // Join with OR for broader matching
+      const ftsQuery = expandSynonyms(words.join(' OR '))
 
       let rows: MemoryRow[]
       try {
