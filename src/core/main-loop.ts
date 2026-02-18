@@ -639,8 +639,14 @@ ${recentExchange.slice(0, 2000)}`
                 log.info('Memory extracted', { count: items.length })
               }
             } catch {
-              // Model didn't return valid JSON — store as single memory if it looks useful
-              if (body.length > 20 && body.length < 500) {
+              // Model didn't return valid JSON — only store if it looks like a real fact (not JSON/code/NOTHING)
+              const isGarbage =
+                body.startsWith('NOTHING') ||
+                body.startsWith('```') ||
+                body.startsWith('[') ||
+                body.startsWith('{') ||
+                body.includes('```json')
+              if (!isGarbage && body.length > 20 && body.length < 500) {
                 memory.store(body, 'conversation')
                 log.info('Memory extracted', { count: 1, raw: true })
               }
