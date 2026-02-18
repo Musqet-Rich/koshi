@@ -1,4 +1,4 @@
-import { Box, Text, useApp, useInput, useStdout } from 'ink'
+import { Box, Text, useApp, useStdout } from 'ink'
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import WebSocket from 'ws'
 import { MultiLineInput } from './MultiLineInput.js'
@@ -86,11 +86,6 @@ export function App({ port, session }: Props) {
     }
   }, [port, streaming])
 
-  useInput((ch, key) => {
-    if (key.ctrl && ch === 'c') exit()
-    if (key.ctrl && ch === 'd') exit()
-  })
-
   const handleSubmit = useCallback(
     (value: string) => {
       const trimmed = value.trim()
@@ -161,7 +156,7 @@ export function App({ port, session }: Props) {
       </Box>
       <Box>
         <Text color="blue">&gt; </Text>
-        <MultiLineInput value={input} onChange={setInput} onSubmit={handleSubmit} />
+        <MultiLineInput value={input} onChange={setInput} onSubmit={handleSubmit} onExit={exit} />
       </Box>
     </Box>
   )
