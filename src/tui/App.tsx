@@ -63,7 +63,7 @@ export function App({ port, session }: Props) {
     return () => clearInterval(t)
   }, [activity.state])
 
-  // Reserve: 1 status + 1 separator + 1 separator + input lines
+  // Reserve: 1 separator + 1 status + 1 separator + input lines = 3 + input
   const inputLineCount = Math.max(1, input.split('\n').length)
   const chatHeight = Math.max(rows - 3 - inputLineCount, 3)
 
@@ -171,7 +171,28 @@ export function App({ port, session }: Props) {
 
   return (
     <Box flexDirection="column" height={rows}>
-      {/* Status bar */}
+      {/* Messages — fixed height, bottom-aligned */}
+      <Box flexDirection="column" height={chatHeight} overflow="hidden">
+        <Box flexDirection="column" flexGrow={1} justifyContent="flex-end">
+          {visible.map((msg, i) => {
+            const prev = i > 0 ? visible[i - 1] : undefined
+            const needsGap = prev && prev.role !== msg.role
+            return (
+              <Box key={`${msg.role}-${i}-${msg.content.length}`} flexDirection="column" marginTop={needsGap ? 1 : 0}>
+                <Text wrap="wrap" color={msg.role === 'user' ? 'blue' : 'white'}>
+                  {msg.role === 'user' ? '> ' : '  '}
+                  {msg.content}
+                </Text>
+              </Box>
+            )
+          })}
+        </Box>
+      </Box>
+
+      {/* Status bar — between messages and input */}
+      <Box>
+        <Text dimColor>{separator}</Text>
+      </Box>
       <Box>
         <Text color={spinnerColor}>
           {spinner} {activityLabel}
@@ -187,25 +208,6 @@ export function App({ port, session }: Props) {
         {activity.model && <Text dimColor>{activity.model}</Text>}
         {agentsStr && <Text dimColor>{agentsStr}</Text>}
       </Box>
-      <Box>
-        <Text dimColor>{separator}</Text>
-      </Box>
-
-      {/* Messages — fixed height, bottom-aligned */}
-      <Box flexDirection="column" height={chatHeight} overflow="hidden">
-        <Box flexDirection="column" flexGrow={1} justifyContent="flex-end">
-          {visible.map((msg, i) => (
-            <Box key={`${msg.role}-${i}-${msg.content.length}`} paddingBottom={i < visible.length - 1 ? 0 : 0}>
-              <Text wrap="wrap" color={msg.role === 'user' ? 'blue' : 'white'}>
-                {msg.role === 'user' ? '> ' : '  '}
-                {msg.content}
-              </Text>
-            </Box>
-          ))}
-        </Box>
-      </Box>
-
-      {/* Input area */}
       <Box>
         <Text dimColor>{separator}</Text>
       </Box>
