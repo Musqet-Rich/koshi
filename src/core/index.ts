@@ -15,6 +15,7 @@ import { loadPlugins } from './plugins.js'
 import { createPromptBuilder } from './prompt.js'
 import { createRouter } from './router.js'
 import { createSessionManager } from './sessions.js'
+import { loadSkillIndex } from './skills.js'
 import { createTaskManager } from './tasks.js'
 import { registerWebSocket, setTuiContext } from './ws.js'
 
@@ -54,6 +55,11 @@ export async function main(): Promise<void> {
   const memory = createMemory(db)
   const sessionManager = createSessionManager(db)
   const promptBuilder = createPromptBuilder(config)
+
+  // Load skills
+  const skillIndex = loadSkillIndex()
+  promptBuilder.setSkillIndex(skillIndex)
+
   const _taskManager = createTaskManager(db)
   const buffer = createBuffer(db)
   const router = createRouter(config, buffer)

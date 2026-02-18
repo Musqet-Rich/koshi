@@ -8,6 +8,7 @@ import type { createMemory } from './memory.js'
 import type { createPromptBuilder } from './prompt.js'
 import type { createRouter } from './router.js'
 import type { createSessionManager } from './sessions.js'
+import { getSkillContent, matchSkills } from './skills.js'
 import type { WsActivityUpdate } from './ws.js'
 import { broadcast } from './ws.js'
 
@@ -142,6 +143,21 @@ const MEMORY_TOOLS: Tool[] = [
   },
 ]
 
+const SKILL_TOOLS: Tool[] = [
+  {
+    name: 'load_skill',
+    description:
+      'Load the full instructions for a skill by name. Use this when the system prompt indicates a skill may be relevant to the current request.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        name: { type: 'string', description: 'Skill name to load' },
+      },
+      required: ['name'],
+    },
+  },
+]
+
 // ─── Tool Execution ──────────────────────────────────────────────────────────
 
 function executeTool(
@@ -169,6 +185,11 @@ function executeTool(
   }
 
   switch (name) {
+    case 'load_skill': {
+      const skillName = input.name as string
+      const content = getSkillContent(skillName)
+      return content ?? `Skill "${skillName}" not found.`
+    }
     case 'memory_query': {
       const query = input.query as string
       const limit = (input.limit as number) ?? 5
@@ -350,8 +371,12 @@ export function createMainLoop(opts: {
       const memories = memory.query(userContent, 5)
 
       // Build system prompt
-      const allTools = [...MAIN_TOOLS, ...MEMORY_TOOLS]
-      const systemPrompt = promptBuilder.build({ memories, tools: allTools })
+      const allTools = [...MAIN_TOOLS, ...MEMORY_TOOLS, ...SKILL_TOOLS]
+
+      // Match skills against user message
+      const skillMatches = matchSkills(userContent)
+
+      const systemPrompt = promptBuilder.build({ memories, tools: allTools, skillMatches })
 
       // Build messages for model
       const modelMessages: SessionMessage[] = [
