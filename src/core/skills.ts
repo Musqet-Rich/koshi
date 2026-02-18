@@ -106,6 +106,11 @@ export function loadSkillIndex(
   return merged.map((s) => ({ name: s.name, description: s.description }))
 }
 
+/** Get current skill index (includes runtime-created skills) */
+export function getSkillIndex(): { name: string; description: string }[] {
+  return skillIndex.map((s) => ({ name: s.name, description: s.description }))
+}
+
 /** Match skills by scanning triggers against text (case-insensitive) */
 export function matchSkills(text: string): { name: string; description: string }[] {
   const lower = text.toLowerCase()

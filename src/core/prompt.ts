@@ -1,4 +1,5 @@
 import type { KoshiConfig, MemoryResult, Tool } from '../types.js'
+import { getSkillIndex } from './skills.js'
 
 interface SkillRef {
   name: string
@@ -51,10 +52,11 @@ export function createPromptBuilder(config: KoshiConfig) {
         sections.push(`## Current Task\n${opts.activeContext}`)
       }
 
-      // Always include skill index
-      if (_skillIndex.length > 0) {
+      // Always include skill index (live, includes runtime-created skills)
+      const currentSkills = getSkillIndex()
+      if (currentSkills.length > 0) {
         sections.push(
-          `## Available Skills\n${_skillIndex.map((s) => `- **${s.name}**: ${s.description}`).join('\n')}\n\nUse the \`load_skill\` tool to load full instructions for any skill when needed.`,
+          `## Available Skills\n${currentSkills.map((s) => `- **${s.name}**: ${s.description}`).join('\n')}\n\nUse the \`load_skill\` tool to load full instructions for any skill when needed.`,
         )
       }
 
