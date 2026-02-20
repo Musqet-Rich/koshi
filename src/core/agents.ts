@@ -225,10 +225,8 @@ export function createAgentManager(opts: {
 
       try {
         const sessionId = sessionManager.createSession({ model: modelName, type: 'sub-agent' })
-        const memories = memory.query(options.task, 5)
-
+        // Memory is now queried by the agent mid-call via memory_query tool.
         const basePrompt = promptBuilder.build({
-          memories,
           tools: SUBAGENT_TOOLS,
           activeContext: options.task,
         })

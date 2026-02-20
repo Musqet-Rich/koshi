@@ -1,9 +1,27 @@
+import { statSync } from 'node:fs'
 import type Database from 'better-sqlite3'
 import type { MemoryResult } from '../types.js'
 import { createLogger } from './logger.js'
-import { expandSynonyms } from './synonyms.js'
+// synonyms.ts is deprecated — the agent handles synonym expansion naturally
+// during memory_query tool calls. FTS queries now use simple quoted terms.
 
 const log = createLogger('memory')
+
+/** Parse a human-readable size string like "100MB" into bytes. */
+function parseSize(size: string): number {
+  const match = size.trim().match(/^(\d+(?:\.\d+)?)\s*(B|KB|MB|GB|TB)$/i)
+  if (!match) throw new Error(`Invalid size format: "${size}". Expected e.g. "100MB"`)
+  const value = Number.parseFloat(match[1])
+  const unit = match[2].toUpperCase()
+  const multipliers: Record<string, number> = {
+    B: 1,
+    KB: 1024,
+    MB: 1024 * 1024,
+    GB: 1024 * 1024 * 1024,
+    TB: 1024 * 1024 * 1024 * 1024,
+  }
+  return Math.floor(value * multipliers[unit])
+}
 
 interface MemoryRow {
   id: number
@@ -90,18 +108,10 @@ export function createMemory(db: Database.Database) {
         .filter((w) => w.length > 1)
       if (words.length === 0) return []
 
-      // Expand synonyms per word, then quote bare terms so FTS5 treats them as
-      // literal tokens (preventing column-reference or operator misparses).
-      // expandSynonyms returns either the bare word unchanged or a grouped
-      // expression like "(api OR interface OR endpoint)"; only quote the former.
-      const ftsQuery = words
-        .map((w) => {
-          const expanded = expandSynonyms(w)
-          // If synonyms were found, expanded is a parenthesised group — keep as-is.
-          // Otherwise wrap the bare word in double-quotes for FTS5 literal matching.
-          return expanded.startsWith('(') ? expanded : `"${expanded}"`
-        })
-        .join(' OR ')
+      // Quote each word for FTS5 literal matching (prevents column-reference
+      // or operator misparses). Synonym expansion is now handled by the agent
+      // at query time via the memory_query tool.
+      const ftsQuery = words.map((w) => `"${w}"`).join(' OR ')
 
       let rows: MemoryRow[]
       try {
@@ -164,19 +174,148 @@ export function createMemory(db: Database.Database) {
       deleteStmt.run(id)
     },
 
-    prune(prunePercent: number): number {
+    /**
+     * Prune the bottom N% of memories by score+recency, but only if the DB
+     * file exceeds the configured maxSize.  Pruned memories are moved to a
+     * searchable archive table — never deleted.
+     *
+     * @param dbPath  - Absolute path to the SQLite DB file
+     * @param maxSize - Human-readable size threshold, e.g. "100MB"
+     * @param prunePercent - Bottom N% of memories to archive (1 = 1%)
+     * @returns Object with count of archived memories and new file size
+     */
+    prune(dbPath: string, maxSize: string, prunePercent: number): { archived: number; dbSizeBefore: number; dbSizeAfter: number } {
+      // 1. Check file size
+      let dbSizeBefore: number
+      try {
+        dbSizeBefore = statSync(dbPath).size
+      } catch {
+        log.warn('Could not stat DB file for pruning', { dbPath })
+        return { archived: 0, dbSizeBefore: 0, dbSizeAfter: 0 }
+      }
+
+      const maxBytes = parseSize(maxSize)
+      if (dbSizeBefore <= maxBytes) {
+        log.info('DB under size limit, skipping prune', {
+          dbSize: `${(dbSizeBefore / (1024 * 1024)).toFixed(1)}MB`,
+          maxSize,
+        })
+        return { archived: 0, dbSizeBefore, dbSizeAfter: dbSizeBefore }
+      }
+
+      log.info('DB over size limit, pruning', {
+        dbSize: `${(dbSizeBefore / (1024 * 1024)).toFixed(1)}MB`,
+        maxSize,
+        prunePercent,
+      })
+
+      // 2. Calculate how many to prune
       const { cnt } = countStmt.get() as { cnt: number }
-      const pruneCount = Math.floor(cnt * (prunePercent / 100))
-      if (pruneCount <= 0) return 0
+      const pruneCount = Math.max(1, Math.floor(cnt * (prunePercent / 100)))
 
-      const ids = (lowestStmt.all(pruneCount) as { id: number }[]).map((r) => r.id)
-      if (ids.length === 0) return 0
+      // 3. Score all memories using the same formula as query re-ranking:
+      //    scoreWeight = exp(score * 0.2), recency = 1 / (1 + daysSince * 0.01)
+      //    combined = scoreWeight * recency  (lower = worse = prune candidate)
+      const allRows = db
+        .prepare('SELECT id, score, created_at, last_hit_at FROM memories')
+        .all() as { id: number; score: number; created_at: string; last_hit_at: string | null }[]
 
-      const placeholders = ids.map(() => '?').join(',')
-      db.prepare(`INSERT INTO memories_archive SELECT * FROM memories WHERE id IN (${placeholders})`).run(...ids)
-      db.prepare(`DELETE FROM memories WHERE id IN (${placeholders})`).run(...ids)
+      const now = Date.now()
+      const scored = allRows.map((row) => {
+        const s = row.score ?? 0
+        const scoreWeight = Math.exp(s * 0.2)
+        const recencyRef = row.last_hit_at
+          ? new Date(row.last_hit_at).getTime()
+          : new Date(row.created_at).getTime()
+        const daysSince = (now - recencyRef) / (1000 * 60 * 60 * 24)
+        const recency = 1 / (1 + daysSince * 0.01)
+        return { id: row.id, rank: scoreWeight * recency }
+      })
 
-      return ids.length
+      // Sort ascending — lowest rank first (worst memories)
+      scored.sort((a, b) => a.rank - b.rank)
+
+      const idsToArchive = scored.slice(0, pruneCount).map((r) => r.id)
+      if (idsToArchive.length === 0) {
+        return { archived: 0, dbSizeBefore, dbSizeAfter: dbSizeBefore }
+      }
+
+      // 4. Archive in a transaction
+      const archiveTransaction = db.transaction((ids: number[]) => {
+        const placeholders = ids.map(() => '?').join(',')
+        // Insert into archive with original_id mapping
+        db.prepare(
+          `INSERT INTO memories_archive (original_id, content, source, tags, created_at, last_hit_at, score, session_id)
+           SELECT id, content, source, tags, created_at, last_hit_at, score, session_id
+           FROM memories WHERE id IN (${placeholders})`,
+        ).run(...ids)
+        // Delete from main table (FTS sync handled by existing triggers)
+        db.prepare(`DELETE FROM memories WHERE id IN (${placeholders})`).run(...ids)
+        return ids.length
+      })
+
+      const archived = archiveTransaction(idsToArchive)
+
+      // 5. Get new size after pruning
+      let dbSizeAfter: number
+      try {
+        dbSizeAfter = statSync(dbPath).size
+      } catch {
+        dbSizeAfter = dbSizeBefore
+      }
+
+      log.info('Pruning complete', {
+        archived,
+        dbSizeBefore: `${(dbSizeBefore / (1024 * 1024)).toFixed(1)}MB`,
+        dbSizeAfter: `${(dbSizeAfter / (1024 * 1024)).toFixed(1)}MB`,
+      })
+
+      return { archived, dbSizeBefore, dbSizeAfter }
+    },
+
+    /**
+     * Search the archive for memories matching a query (FTS5 fallback search).
+     */
+    queryArchive(queryString: string, limit = 10): MemoryResult[] {
+      const noUrls = queryString.replace(/https?:\/\/\S+/g, ' ')
+      const cleaned = noUrls
+        .replace(/-/g, ' ')
+        .replace(/[?!.,;:'"()[\]{}<>*^~@#$%&|\\]/g, ' ')
+      const words = cleaned
+        .trim()
+        .split(/\s+/)
+        .filter((w) => w.length > 1)
+      if (words.length === 0) return []
+
+      const ftsQuery = words.map((w) => `"${w}"`).join(' OR ')
+
+      try {
+        const rows = db
+          .prepare(
+            `SELECT memories_archive.*, memories_archive_fts.rank AS bm25_rank
+             FROM memories_archive_fts
+             JOIN memories_archive ON memories_archive.id = memories_archive_fts.rowid
+             WHERE memories_archive_fts MATCH ?
+             ORDER BY memories_archive_fts.rank
+             LIMIT ?`,
+          )
+          .all(ftsQuery, limit) as (MemoryRow & { original_id: number; archived_at: string })[]
+
+        return rows.map((row, i) => ({
+          id: row.original_id ?? row.id,
+          content: row.content,
+          source: row.source ?? undefined,
+          tags: row.tags ?? undefined,
+          score: row.score,
+          rank: i + 1,
+        }))
+      } catch (err) {
+        log.warn('Archive FTS query failed', {
+          query: ftsQuery,
+          error: err instanceof Error ? err.message : String(err),
+        })
+        return []
+      }
     },
   }
 }

@@ -25,6 +25,7 @@ export interface KoshiConfig {
     demoteWeight?: number
     maxSize?: string
     maxEntries?: number
+    pruneSchedule?: string
     prunePercent?: number
   }
   sessions: {

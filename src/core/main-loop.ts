@@ -525,8 +525,8 @@ export function createMainLoop(opts: {
       // Get session history
       const history = sessionManager.getHistory(MAIN_SESSION_ID)
 
-      // Query memory for relevant context
-      const memories = memory.query(userContent, 5)
+      // Memory is now queried by the agent mid-call via the memory_query tool.
+      // No automatic pre-injection.
 
       // Build system prompt
       const allTools = [...MAIN_TOOLS, ...MEMORY_TOOLS, ...SKILL_TOOLS, ...CRON_TOOLS]
@@ -542,7 +542,7 @@ export function createMainLoop(opts: {
         }
       }
 
-      const systemPrompt = promptBuilder.build({ memories, tools: allTools, skillMatches, loadedSkills })
+      const systemPrompt = promptBuilder.build({ tools: allTools, skillMatches, loadedSkills })
 
       // Log prompt if debug enabled
       if (config.debug?.logPrompts) {

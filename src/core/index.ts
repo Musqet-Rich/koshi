@@ -1,7 +1,8 @@
 // Koshi (骨子) — core daemon entry point
 
 import { existsSync } from 'node:fs'
-import { resolve } from 'node:path'
+import { join, resolve } from 'node:path'
+import { Cron } from 'croner'
 import Fastify from 'fastify'
 import type { ChannelPlugin, KoshiConfig, KoshiContext, ModelPlugin } from '../types.js'
 import { createAgentManager } from './agents.js'
@@ -198,6 +199,31 @@ export async function main(): Promise<void> {
     if (cleaned > 0) log.info(`Buffer cleanup: removed ${cleaned} old messages`)
   }, 86400000)
 
+  // 11b. Scheduled memory pruning (cron-based)
+  const dbPath = join(resolve(config.dataPath ?? './data'), 'koshi.db')
+  const pruneSchedule = config.memory.pruneSchedule ?? '0 4 * * *'
+  const pruneMaxSize = config.memory.maxSize ?? '100MB'
+  const prunePct = config.memory.prunePercent ?? 1
+
+  const pruneCron = new Cron(pruneSchedule, () => {
+    log.info('Memory prune cron triggered', { schedule: pruneSchedule })
+    try {
+      const result = memory.prune(dbPath, pruneMaxSize, prunePct)
+      if (result.archived > 0) {
+        log.info('Memory prune completed', {
+          archived: result.archived,
+          dbSizeBefore: `${(result.dbSizeBefore / (1024 * 1024)).toFixed(1)}MB`,
+          dbSizeAfter: `${(result.dbSizeAfter / (1024 * 1024)).toFixed(1)}MB`,
+        })
+      } else {
+        log.info('Memory prune: no action needed')
+      }
+    } catch (err) {
+      log.error('Memory prune failed', { error: err instanceof Error ? err.message : String(err) })
+    }
+  })
+  log.info('Memory prune scheduled', { cron: pruneSchedule, maxSize: pruneMaxSize, prunePercent: prunePct })
+
   // 12. Register Tool API (for MCP server)
   registerToolApi(fastify, { memory, agentManager, router, sessionManager, executeTool: mainLoop.callTool })
 
@@ -220,6 +246,7 @@ export async function main(): Promise<void> {
   const shutdown = async (signal: string) => {
     log.info(`Received ${signal}, shutting down...`)
     clearInterval(cleanupTimer)
+    pruneCron.stop()
     mainLoop.stop()
     router.stop()
     try {

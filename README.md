@@ -55,6 +55,10 @@ pnpm lint:fix   # biome auto-fix
 pnpm dev        # run daemon with tsx (no build step)
 ```
 
+## Documentation
+
+- [Claude Code Integration](docs/claude-code-integration.md) — using Max/Pro subscription as LLM backend
+
 ## Design Philosophy
 
 Four primitives, each with a clear role:

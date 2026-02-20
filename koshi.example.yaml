@@ -28,6 +28,9 @@ buffer:
 
 memory:
   backend: sqlite
+  maxSize: 100MB          # DB size threshold before pruning activates
+  pruneSchedule: "0 4 * * *"  # cron expression, default 4am daily
+  prunePercent: 1          # bottom N% by score, only if over maxSize
 
 sessions:
   maxMessages: 100

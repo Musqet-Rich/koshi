@@ -34,15 +34,36 @@ CREATE TRIGGER IF NOT EXISTS memories_au AFTER UPDATE ON memories BEGIN
 END;
 
 CREATE TABLE IF NOT EXISTS memories_archive (
-  id INTEGER PRIMARY KEY,
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  original_id INTEGER NOT NULL,
   content TEXT NOT NULL,
   source TEXT,
   tags TEXT,
-  created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+  created_at DATETIME,
   last_hit_at DATETIME,
   score INTEGER DEFAULT 0,
-  session_id TEXT
+  session_id TEXT,
+  archived_at DATETIME DEFAULT CURRENT_TIMESTAMP
 );
+
+CREATE INDEX IF NOT EXISTS idx_archive_original_id ON memories_archive(original_id);
+CREATE INDEX IF NOT EXISTS idx_archive_archived_at ON memories_archive(archived_at);
+
+CREATE VIRTUAL TABLE IF NOT EXISTS memories_archive_fts USING fts5(
+  content,
+  tags,
+  source,
+  content='memories_archive',
+  content_rowid='id'
+);
+
+CREATE TRIGGER IF NOT EXISTS memories_archive_ai AFTER INSERT ON memories_archive BEGIN
+  INSERT INTO memories_archive_fts(rowid, content, tags, source) VALUES (new.id, new.content, new.tags, new.source);
+END;
+
+CREATE TRIGGER IF NOT EXISTS memories_archive_ad AFTER DELETE ON memories_archive BEGIN
+  INSERT INTO memories_archive_fts(memories_archive_fts, rowid, content, tags, source) VALUES ('delete', old.id, old.content, old.tags, old.source);
+END;
 
 CREATE TABLE IF NOT EXISTS tasks (
   id INTEGER PRIMARY KEY,
