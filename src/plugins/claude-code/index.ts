@@ -18,6 +18,8 @@ const plugin: KoshiPlugin = {
   async init(koshi: KoshiContext, config: PluginConfig) {
     const cliBin = (config.bin as string) ?? 'claude'
     const skipPermissions = (config.skipPermissions as boolean) ?? true
+    const mcpConfig = config.mcpConfig as string | undefined
+    const allowedTools = config.allowedTools as string[] | undefined
     const pluginRef = config.name
 
     // Find all named models that use this plugin
@@ -33,6 +35,8 @@ const plugin: KoshiPlugin = {
             messages,
             tools,
             skipPermissions,
+            mcpConfig,
+            allowedTools,
           })
           if (response.usage) await recordUsage(koshi, response.usage)
           return response
@@ -45,6 +49,8 @@ const plugin: KoshiPlugin = {
             messages,
             tools,
             skipPermissions,
+            mcpConfig,
+            allowedTools,
           })) {
             yield chunk
           }

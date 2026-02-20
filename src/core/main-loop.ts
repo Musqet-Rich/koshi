@@ -143,6 +143,20 @@ const MEMORY_TOOLS: Tool[] = [
       required: ['id'],
     },
   },
+  {
+    name: 'memory_update',
+    description:
+      'Update an existing memory in place — correct outdated facts, refine content, or fix tags without demoting and re-storing.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        id: { type: 'number', description: 'Memory ID to update' },
+        content: { type: 'string', description: 'New content for the memory' },
+        tags: { type: 'string', description: 'New comma-separated tags (optional — keeps existing tags if omitted)' },
+      },
+      required: ['id', 'content'],
+    },
+  },
 ]
 
 const SKILL_TOOLS: Tool[] = [
@@ -295,7 +309,7 @@ function executeTool(
       const limit = (input.limit as number) ?? 5
       const results = memory.query(query, limit)
       if (results.length === 0) return 'No memories found.'
-      return `From memory:\n${results.map((r) => `- [id:${r.id}] ${r.content}${r.tags ? ` (tags: ${r.tags})` : ''}`).join('\n')}`
+      return `From memory:\n${results.map((r) => `- [id:${r.id}] (score: ${r.score}, rank: ${r.finalRank ?? 0}) ${r.content}${r.tags ? ` (tags: ${r.tags})` : ''}`).join('\n')}`
     }
     case 'memory_store': {
       const content = input.content as string
@@ -312,6 +326,15 @@ function executeTool(
       const id = input.id as number
       memory.demote(id)
       return `Demoted memory #${id}`
+    }
+    case 'memory_update': {
+      const id = input.id as number
+      const content = input.content as string
+      const tags = input.tags as string | undefined
+      const result = memory.update(id, content, tags)
+      if (!result.success) return `Memory #${id} not found.`
+      const m = result.memory!
+      return `Updated memory #${m.id}: ${m.content}${m.tags ? ` (tags: ${m.tags})` : ''}`
     }
     case 'spawn_agent': {
       const task = input.task as string
@@ -744,6 +767,11 @@ ${recentExchange.slice(0, 2000)}`
         timer = null
       }
       log.info('Main loop stopped')
+    },
+
+    /** Execute a tool call — used by the MCP tool API */
+    callTool(toolCall: ToolCall): string {
+      return executeTool(toolCall, memory, agentManager, router, undefined, sessionManager)
     },
   }
 }

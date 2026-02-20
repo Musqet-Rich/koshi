@@ -1,0 +1,12 @@
+{
+  "mcpServers": {
+    "koshi": {
+      "command": "node",
+      "args": ["dist/core/mcp-server.js"],
+      "cwd": "/home/monomi/.openclaw/workspace/koshi",
+      "env": {
+        "KOSHI_PORT": "3200"
+      }
+    }
+  }
+}

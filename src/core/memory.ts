@@ -12,6 +12,7 @@ interface MemoryRow {
   tags: string | null
   score: number
   created_at: string
+  last_hit_at: string | null
   bm25_rank: number
 }
 
@@ -36,6 +37,12 @@ export function createMemory(db: Database.Database) {
 
   const demoteStmt = db.prepare(`UPDATE memories SET score = score - ? WHERE id = ?`)
 
+  const updateStmt = db.prepare(
+    `UPDATE memories SET content = ?, tags = COALESCE(?, tags), last_hit_at = CURRENT_TIMESTAMP WHERE id = ?`,
+  )
+
+  const getStmt = db.prepare(`SELECT id, content, source, tags, score FROM memories WHERE id = ?`)
+
   const deleteStmt = db.prepare(`DELETE FROM memories WHERE id = ?`)
 
   const countStmt = db.prepare(`SELECT COUNT(*) AS cnt FROM memories`)
@@ -48,17 +55,53 @@ export function createMemory(db: Database.Database) {
       return Number(result.lastInsertRowid)
     },
 
+    update(id: number, content: string, tags?: string): { success: boolean; memory?: MemoryResult } {
+      const existing = getStmt.get(id) as MemoryRow | undefined
+      if (!existing) return { success: false }
+      updateStmt.run(content, tags ?? null, id)
+      const updated = getStmt.get(id) as MemoryRow
+      return {
+        success: true,
+        memory: {
+          id: updated.id,
+          content: updated.content,
+          source: updated.source ?? undefined,
+          tags: updated.tags ?? undefined,
+          score: updated.score,
+          rank: 0,
+        },
+      }
+    },
+
     query(queryString: string, limit = 20): MemoryResult[] {
-      // Strip punctuation and FTS5-special chars, then split into words
-      const cleaned = queryString.replace(/[?!.,;:'"()[\]{}<>*^~@#$%&|\\]/g, ' ')
+      // Strip URLs first (they produce noisy, FTS5-incompatible tokens)
+      const noUrls = queryString.replace(/https?:\/\/\S+/g, ' ')
+
+      // Strip hyphens (FTS5 interprets "word-word" as column:term or subtraction)
+      // then strip remaining punctuation / FTS5-special chars
+      const cleaned = noUrls
+        .replace(/-/g, ' ')
+        .replace(/[?!.,;:'"()[\]{}<>*^~@#$%&|\\]/g, ' ')
+
+      // Split into words, drop single-char tokens
       const words = cleaned
         .trim()
         .split(/\s+/)
         .filter((w) => w.length > 1)
       if (words.length === 0) return []
 
-      // Join with OR for broader matching
-      const ftsQuery = expandSynonyms(words.join(' OR '))
+      // Expand synonyms per word, then quote bare terms so FTS5 treats them as
+      // literal tokens (preventing column-reference or operator misparses).
+      // expandSynonyms returns either the bare word unchanged or a grouped
+      // expression like "(api OR interface OR endpoint)"; only quote the former.
+      const ftsQuery = words
+        .map((w) => {
+          const expanded = expandSynonyms(w)
+          // If synonyms were found, expanded is a parenthesised group — keep as-is.
+          // Otherwise wrap the bare word in double-quotes for FTS5 literal matching.
+          return expanded.startsWith('(') ? expanded : `"${expanded}"`
+        })
+        .join(' OR ')
 
       let rows: MemoryRow[]
       try {
@@ -71,15 +114,28 @@ export function createMemory(db: Database.Database) {
         return []
       }
 
-      // Re-rank: BM25_relevance × (1 + max(score, 0)) × recency_factor
+      // Re-rank: BM25_relevance × score_weight × recency_factor
+      // - recency uses last_hit_at (reinforced timestamp) when available,
+      //   falling back to created_at for untouched memories
+      // - score_weight uses full score (including negative from demote)
+      //   so demoted memories rank lower, reinforced ones rank higher
       const now = Date.now()
       const scored = rows.map((row) => {
         const bm25 = -row.bm25_rank // FTS5 rank is negative (lower = better)
-        const scoreBoost = 1 + Math.max(row.score ?? 0, 0)
-        const created = new Date(row.created_at).getTime()
-        const daysSince = (now - created) / (1000 * 60 * 60 * 24)
+
+        // Score weight: allow negative scores to push memories down.
+        // sigmoid-like: maps score → (0, ∞), centered at 1 for score=0
+        const s = row.score ?? 0
+        const scoreWeight = Math.exp(s * 0.2)
+
+        // Recency: prefer last_hit_at (set by reinforce) over created_at
+        const recencyRef = row.last_hit_at
+          ? new Date(row.last_hit_at).getTime()
+          : new Date(row.created_at).getTime()
+        const daysSince = (now - recencyRef) / (1000 * 60 * 60 * 24)
         const recency = 1 / (1 + daysSince * 0.01)
-        const finalRank = bm25 * scoreBoost * recency
+
+        const finalRank = bm25 * scoreWeight * recency
         return { row, finalRank }
       })
 
@@ -92,6 +148,7 @@ export function createMemory(db: Database.Database) {
         tags: s.row.tags ?? undefined,
         score: s.row.score,
         rank: i + 1,
+        finalRank: Math.round(s.finalRank * 1000) / 1000,
       }))
     },
 

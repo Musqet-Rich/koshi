@@ -234,6 +234,7 @@ export interface MemoryResult {
   tags?: string
   score: number
   rank: number
+  finalRank?: number
 }
 
 // ─── Sessions ────────────────────────────────────────────────────────────────

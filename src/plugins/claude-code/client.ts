@@ -7,6 +7,8 @@ export interface ClaudeCodeOptions {
   messages: SessionMessage[]
   tools?: Tool[]
   skipPermissions: boolean
+  mcpConfig?: string
+  allowedTools?: string[]
 }
 
 /**
@@ -47,8 +49,13 @@ function buildArgs(opts: ClaudeCodeOptions, systemPrompt: string | undefined): s
     args.push('--system-prompt', systemPrompt)
   }
 
-  // Claude Code doesn't support passing tools via CLI — it has its own built-in tools.
-  // For Koshi's purposes, we rely on Claude Code's native tool execution.
+  if (opts.mcpConfig) {
+    args.push('--mcp-config', opts.mcpConfig)
+  }
+
+  if (opts.allowedTools?.length) {
+    args.push('--allowedTools', ...opts.allowedTools)
+  }
 
   return args
 }

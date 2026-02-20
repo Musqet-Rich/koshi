@@ -18,6 +18,7 @@ import { createRouter } from './router.js'
 import { createSessionManager } from './sessions.js'
 import { loadSkillIndex } from './skills.js'
 import { createTaskManager } from './tasks.js'
+import { registerToolApi } from './tool-api.js'
 import { registerWebSocket, setTuiContext } from './ws.js'
 
 const log = createLogger('core')
@@ -197,7 +198,10 @@ export async function main(): Promise<void> {
     if (cleaned > 0) log.info(`Buffer cleanup: removed ${cleaned} old messages`)
   }, 86400000)
 
-  // 12. Register WebSocket
+  // 12. Register Tool API (for MCP server)
+  registerToolApi(fastify, { memory, agentManager, router, sessionManager, executeTool: mainLoop.callTool })
+
+  // 13. Register WebSocket
   setTuiContext(context)
   await registerWebSocket(fastify, config)
 
