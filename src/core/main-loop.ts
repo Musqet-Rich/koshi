@@ -241,8 +241,8 @@ function executeTool(
   memory: ReturnType<typeof createMemory>,
   agentManager?: ReturnType<typeof createAgentManager>,
   router?: ReturnType<typeof createRouter>,
-  batch?: { channel: string; conversation: string },
-  sessionManager?: ReturnType<typeof createSessionManager>,
+  _batch?: { channel: string; conversation: string },
+  _sessionManager?: ReturnType<typeof createSessionManager>,
 ): string {
   const { name, input } = toolCall
 
@@ -655,13 +655,8 @@ ${priorTasks}
 Exchange:
 ${recentExchange.slice(0, 2000)}`
         try {
-          const subModel = config.agent.subAgentModel
-            ? getModel(config.agent.subAgentModel)
-            : getModel(modelName)
-          const extractResult = await subModel.complete(
-            [{ role: 'user', content: extractPrompt }],
-            [],
-          )
+          const subModel = config.agent.subAgentModel ? getModel(config.agent.subAgentModel) : getModel(modelName)
+          const extractResult = await subModel.complete([{ role: 'user', content: extractPrompt }], [])
           const body = extractResult.content?.trim() ?? ''
           if (body && body !== 'NOTHING') {
             try {

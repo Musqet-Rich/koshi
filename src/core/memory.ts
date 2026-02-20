@@ -50,8 +50,11 @@ export function createMemory(db: Database.Database) {
 
     query(queryString: string, limit = 20): MemoryResult[] {
       // Strip punctuation and FTS5-special chars, then split into words
-      const cleaned = queryString.replace(/[?!.,;:'"()\[\]{}<>*^~@#$%&|\\]/g, ' ')
-      const words = cleaned.trim().split(/\s+/).filter((w) => w.length > 1)
+      const cleaned = queryString.replace(/[?!.,;:'"()[\]{}<>*^~@#$%&|\\]/g, ' ')
+      const words = cleaned
+        .trim()
+        .split(/\s+/)
+        .filter((w) => w.length > 1)
       if (words.length === 0) return []
 
       // Join with OR for broader matching
@@ -61,7 +64,10 @@ export function createMemory(db: Database.Database) {
       try {
         rows = matchStmt.all(ftsQuery, limit * 3) as MemoryRow[]
       } catch (err) {
-        log.warn('Memory FTS query failed', { query: ftsQuery, error: err instanceof Error ? err.message : String(err) })
+        log.warn('Memory FTS query failed', {
+          query: ftsQuery,
+          error: err instanceof Error ? err.message : String(err),
+        })
         return []
       }
 

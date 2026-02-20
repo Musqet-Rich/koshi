@@ -118,7 +118,7 @@ async function executeSubagentTool(
         if (stderr) output += (output ? '\n--- stderr ---\n' : '') + stderr
         if (!output) output = '(no output)'
         if (output.length > MAX_OUTPUT_CHARS) {
-          output = output.slice(0, MAX_OUTPUT_CHARS) + '\n... (truncated)'
+          output = `${output.slice(0, MAX_OUTPUT_CHARS)}\n... (truncated)`
         }
         return output
       } catch (err) {
@@ -129,7 +129,7 @@ async function executeSubagentTool(
         if (e.stderr) output += (output ? '\n--- stderr ---\n' : '') + e.stderr
         if (!output) output = e.message ?? 'Command failed'
         if (output.length > MAX_OUTPUT_CHARS) {
-          output = output.slice(0, MAX_OUTPUT_CHARS) + '\n... (truncated)'
+          output = `${output.slice(0, MAX_OUTPUT_CHARS)}\n... (truncated)`
         }
         return `Exit code ${e.code ?? 'unknown'}:\n${output}`
       }

@@ -25,7 +25,7 @@ const plugin: KoshiPlugin = {
     // Find all named models that use this plugin
     const models = koshi.config.models
     for (const [name, modelConfig] of Object.entries(models)) {
-      if (modelConfig.plugin !== '@koshi/anthropic') continue
+      if (modelConfig.plugin !== config.name) continue
 
       const key = modelConfig.apiKey ?? apiKey
       const modelClient = key === apiKey ? client : createAnthropicClient(key)

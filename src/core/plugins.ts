@@ -21,6 +21,7 @@ function validatePlugin(mod: unknown, ref: string): KoshiPlugin {
 // Built-in plugins bundled with Koshi
 const BUILTIN_PLUGINS: Record<string, string> = {
   '@koshi/anthropic': '../plugins/anthropic/index.js',
+  '@koshi/claude-code': '../plugins/claude-code/index.js',
   '@koshi/autotest': '../plugins/autotest/index.js',
   '@koshi/tui': '../tui/plugin.js',
   '@koshi/memory': '../plugins/memory/index.js',

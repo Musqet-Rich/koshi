@@ -149,7 +149,7 @@ export async function main(): Promise<void> {
     if (targets.length === 0) return 'No channels available'
 
     const results = await Promise.allSettled(
-      targets.map((ch) => ch!.send('tui', { content: `🔔 ${message}`, streaming: false })),
+      targets.map((ch) => ch?.send('tui', { content: `🔔 ${message}`, streaming: false })),
     )
 
     const sent = results.filter((r) => r.status === 'fulfilled').length
