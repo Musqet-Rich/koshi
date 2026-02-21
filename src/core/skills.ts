@@ -12,6 +12,7 @@ export interface SkillEntry {
   name: string
   description: string
   triggers: string[]
+  tools: string[]
   source: 'file' | 'db'
   filePath?: string
 }
@@ -57,6 +58,7 @@ function loadFileSkills(dir: string): SkillEntry[] {
       name,
       description,
       triggers: (data.triggers as string[]) ?? [],
+      tools: (data.tools as string[]) ?? [],
       source: 'file',
       filePath,
     })
@@ -74,6 +76,7 @@ function loadDbSkills(db: Database.Database): SkillEntry[] {
     name: r.name,
     description: r.description,
     triggers: JSON.parse(r.triggers) as string[],
+    tools: [],
     source: 'db' as const,
   }))
 }
@@ -111,12 +114,72 @@ export function getSkillIndex(): { name: string; description: string }[] {
   return skillIndex.map((s) => ({ name: s.name, description: s.description }))
 }
 
-/** Match skills by scanning triggers against text (case-insensitive) */
+/** List all skills with metadata (name, description, triggers, tools, source) — no full content */
+export function listSkills(): { name: string; description: string; triggers: string[]; tools: string[]; source: 'file' | 'db' }[] {
+  return skillIndex.map((s) => ({
+    name: s.name,
+    description: s.description,
+    triggers: s.triggers,
+    tools: s.tools,
+    source: s.source,
+  }))
+}
+
+/** Match skills by scanning triggers against text (word-boundary, case-insensitive) */
 export function matchSkills(text: string): { name: string; description: string }[] {
-  const lower = text.toLowerCase()
   return skillIndex
-    .filter((s) => s.triggers.some((t) => lower.includes(t.toLowerCase())))
+    .filter((s) =>
+      s.triggers.some((t) => {
+        const escaped = t.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
+        const re = new RegExp(`\\b${escaped}\\b`, 'i')
+        return re.test(text)
+      }),
+    )
     .map((s) => ({ name: s.name, description: s.description }))
+}
+
+/**
+ * Match skills with per-turn budget enforcement.
+ * Returns at most `maxPerTurn` skills, ranked by trigger specificity
+ * (longest matching trigger first — longer = more specific).
+ */
+export function matchSkillsWithBudget(
+  text: string,
+  opts: { maxPerTurn: number },
+): { name: string; description: string }[] {
+  // Score each skill by the length of its longest matching trigger
+  const scored: { entry: SkillEntry; bestTriggerLen: number }[] = []
+
+  for (const s of skillIndex) {
+    let bestLen = 0
+    for (const t of s.triggers) {
+      const escaped = t.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
+      const re = new RegExp(`\\b${escaped}\\b`, 'i')
+      if (re.test(text) && t.length > bestLen) {
+        bestLen = t.length
+      }
+    }
+    if (bestLen > 0) {
+      scored.push({ entry: s, bestTriggerLen: bestLen })
+    }
+  }
+
+  if (scored.length === 0) return []
+
+  // Sort by specificity: longest matching trigger first
+  scored.sort((a, b) => b.bestTriggerLen - a.bestTriggerLen)
+
+  // Enforce per-turn cap
+  const limit = Math.max(1, opts.maxPerTurn)
+  if (scored.length > limit) {
+    const skipped = scored.slice(limit).map((s) => s.entry.name)
+    log.warn(`Skill budget: ${scored.length} skills matched, capping to ${limit}. Skipped: ${skipped.join(', ')}`)
+  }
+
+  return scored.slice(0, limit).map((s) => ({
+    name: s.entry.name,
+    description: s.entry.description,
+  }))
 }
 
 /** Get full skill content — checks files first, then DB */
@@ -137,9 +200,96 @@ export function getSkillContent(name: string): string | null {
   return null
 }
 
+/**
+ * Get skill content with a character budget.
+ * If content exceeds `maxChars`, it is truncated and a warning is appended.
+ * Returns null if the skill is not found.
+ */
+export function getSkillContentWithBudget(
+  name: string,
+  opts: { maxChars: number },
+): string | null {
+  const content = getSkillContent(name)
+  if (content === null) return null
+
+  if (content.length <= opts.maxChars) return content
+
+  log.warn(`Skill "${name}" content is ${content.length} chars, truncating to ${opts.maxChars}`)
+  return (
+    content.slice(0, opts.maxChars) +
+    `\n\n[... truncated — skill "${name}" exceeds ${opts.maxChars} char budget (was ${content.length} chars)]`
+  )
+}
+
+// ─── Skill Validation (Security Hardening) ──────────────────────────────────
+
+/** Phrases that indicate prompt injection attempts in skill content. */
+const INJECTION_PHRASES = [
+  'ignore previous instructions',
+  'you are now',
+  'forget your rules',
+  'system prompt',
+  'override',
+  'disregard',
+  'new instructions',
+]
+
+/** Triggers that are too common/short to be meaningful — would match nearly every message. */
+const BANNED_TRIGGERS = new Set([
+  'a', 'an', 'the', 'is', 'it', 'i', 'to', 'and', 'or', 'of', 'in', 'on',
+  'at', 'be', 'do', 'he', 'me', 'my', 'no', 'so', 'up', 'we', 'if', 'as',
+  'by', 'go', 'am', 'us', 'ok', 'hi',
+])
+
+export interface SkillValidationResult {
+  valid: boolean
+  reason?: string
+}
+
+/**
+ * Validate a skill definition for suspicious content before creation or update.
+ * Returns { valid: true } if the skill is safe, or { valid: false, reason } if rejected.
+ */
+export function validateSkillContent(input: {
+  name: string
+  description?: string
+  triggers?: string[]
+  content?: string
+}): SkillValidationResult {
+  // Check content + description for injection phrases
+  const textToScan = [input.content ?? '', input.description ?? ''].join(' ').toLowerCase()
+  for (const phrase of INJECTION_PHRASES) {
+    if (textToScan.includes(phrase)) {
+      return { valid: false, reason: `Content contains suspicious phrase: "${phrase}"` }
+    }
+  }
+
+  // Check triggers — reject single characters or extremely common words
+  if (input.triggers) {
+    for (const trigger of input.triggers) {
+      const normalized = trigger.trim().toLowerCase()
+      if (normalized.length <= 1) {
+        return { valid: false, reason: `Trigger "${trigger}" is too short (single character)` }
+      }
+      if (BANNED_TRIGGERS.has(normalized)) {
+        return { valid: false, reason: `Trigger "${trigger}" is too common and would match nearly every message` }
+      }
+    }
+  }
+
+  return { valid: true }
+}
+
 /** Create a new agent skill in SQLite */
 export function createSkill(input: { name: string; description: string; triggers: string[]; content: string }): string {
   if (!_db) throw new Error('Skills DB not initialized')
+
+  // Security validation — reject suspicious content
+  const validation = validateSkillContent(input)
+  if (!validation.valid) {
+    log.warn('Skill creation blocked by security validation', { name: input.name, reason: validation.reason })
+    throw new Error(`Skill creation blocked: ${validation.reason}`)
+  }
 
   // Check if file-based skill exists with this name
   if (skillIndex.some((s) => s.name === input.name && s.source === 'file')) {
@@ -161,6 +311,7 @@ export function createSkill(input: { name: string; description: string; triggers
     name: input.name,
     description: input.description,
     triggers: input.triggers,
+    tools: [],
     source: 'db',
   })
 
@@ -181,6 +332,13 @@ export function updateSkill(input: {
   const skill = skillIndex.find((s) => s.name === input.name)
   if (!skill) throw new Error(`Skill "${input.name}" not found`)
   if (skill.source === 'file') throw new Error('Cannot modify file-based skills')
+
+  // Security validation — reject suspicious content on update too
+  const validation = validateSkillContent(input)
+  if (!validation.valid) {
+    log.warn('Skill update blocked by security validation', { name: input.name, reason: validation.reason })
+    throw new Error(`Skill update blocked: ${validation.reason}`)
+  }
 
   const existing = _db.prepare('SELECT name FROM skills WHERE name = ?').get(input.name)
   if (!existing) throw new Error(`Skill "${input.name}" not found in database`)
@@ -214,6 +372,23 @@ export function updateSkill(input: {
 
   log.info(`Updated skill: ${input.name}`)
   return `Updated skill "${input.name}"`
+}
+
+/** Delete an agent-created skill from SQLite (cannot delete file-based skills) */
+export function deleteSkill(name: string): string {
+  if (!_db) throw new Error('Skills DB not initialized')
+
+  const skill = skillIndex.find((s) => s.name === name)
+  if (!skill) throw new Error(`Skill "${name}" not found`)
+  if (skill.source === 'file') throw new Error('Cannot delete file-based skills — they are human-managed')
+
+  _db.prepare('DELETE FROM skills WHERE name = ?').run(name)
+
+  // Remove from in-memory index
+  skillIndex = skillIndex.filter((s) => s.name !== name)
+
+  log.info(`Deleted skill: ${name}`)
+  return `Deleted skill "${name}"`
 }
 
 /** Get full skill entries with source/filePath info (for agent spawning) */

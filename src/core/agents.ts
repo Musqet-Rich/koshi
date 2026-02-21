@@ -548,6 +548,16 @@ export function createAgentManager(opts: {
   }
 }
 
+// ─── Trust Boundary ──────────────────────────────────────────────────────────
+
+const TRUST_BOUNDARY_BEGIN = '[SUB-AGENT OUTPUT — UNTRUSTED CONTENT BEGIN]'
+const TRUST_BOUNDARY_END = '[SUB-AGENT OUTPUT — UNTRUSTED CONTENT END]'
+
+/** Wrap sub-agent output in trust boundary markers so the coordinator treats it as data, not instructions. */
+export function wrapSubAgentOutput(output: string): string {
+  return `${TRUST_BOUNDARY_BEGIN}\n${output}\n${TRUST_BOUNDARY_END}`
+}
+
 // ─── Helpers ─────────────────────────────────────────────────────────────────
 
 class TimeoutError extends Error {
@@ -559,17 +569,19 @@ class TimeoutError extends Error {
 
 /**
  * Insert a row into agent_results and return its ID.
+ * Output is wrapped in trust boundary markers before storage.
  */
 function storeAgentResult(
   db: Database.Database,
   result: { taskId: number | null; skillUsed: string; output: string },
 ): number {
+  const wrappedOutput = wrapSubAgentOutput(result.output)
   const res = db
     .prepare(
       `INSERT INTO agent_results (task_id, skill_used, output, memory_ids)
        VALUES (?, ?, ?, '[]')`,
     )
-    .run(result.taskId, result.skillUsed, result.output)
+    .run(result.taskId, result.skillUsed, wrappedOutput)
   return res.lastInsertRowid as number
 }
 

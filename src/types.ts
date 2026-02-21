@@ -37,6 +37,10 @@ export interface KoshiConfig {
     maxConcurrent?: number
     defaultTimeout?: number
   }
+  skills?: {
+    maxPerTurn?: number
+    maxCharsPerSkill?: number
+  }
   dataPath?: string
   skillsPath?: string
   logLevel?: 'debug' | 'info' | 'warn' | 'error'
@@ -97,7 +101,6 @@ export interface MemoryPlugin extends KoshiPlugin {
   query(query: MemoryQuery): Promise<MemoryResult[]>
   reinforce(id: number): void
   demote(id: number): void
-  forget(id: number): void
   prune(maxSize: number, prunePercent: number): Promise<number>
 }
 
@@ -168,6 +171,7 @@ export interface Task {
   skill?: string
   dependsOn: number[]
   status: TaskStatus
+  failureReason?: string
   agentResultId?: number
   createdAt: string
 }
@@ -181,6 +185,7 @@ export interface TaskRow {
   skill: string | null
   depends_on: string
   status: string
+  failure_reason: string | null
   agent_result_id: number | null
   created_at: string
 }
@@ -234,11 +239,14 @@ export interface NarrativeRow {
 
 // ─── Memory ──────────────────────────────────────────────────────────────────
 
+export type TrustLevel = 'high' | 'medium' | 'low'
+
 export interface MemoryEntry {
   id: number
   content: string
   source?: string
   tags?: string
+  trustLevel?: TrustLevel
   createdAt: string
   lastHitAt?: string
   score: number
@@ -255,9 +263,20 @@ export interface MemoryResult {
   content: string
   source?: string
   tags?: string
+  trustLevel?: TrustLevel
   score: number
   rank: number
   finalRank?: number
+}
+
+// ─── Security Events ────────────────────────────────────────────────────────
+
+export interface SecurityEvent {
+  id: number
+  eventType: string
+  source?: string
+  detail?: string
+  createdAt: string
 }
 
 // ─── Sessions ────────────────────────────────────────────────────────────────

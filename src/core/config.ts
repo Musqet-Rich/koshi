@@ -96,6 +96,10 @@ export function loadConfig(path?: string): KoshiConfig {
     },
     cron: doc.cron ?? [],
     agents: doc.agents,
+    skills: {
+      maxPerTurn: doc.skills?.maxPerTurn ?? 3,
+      maxCharsPerSkill: doc.skills?.maxCharsPerSkill ?? 2000,
+    },
     dataPath: doc.dataPath ?? doc.data ?? './data',
     skillsPath: doc.skillsPath ?? doc.skills?.path,
     logLevel: doc.logLevel ?? 'info',

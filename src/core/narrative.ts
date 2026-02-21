@@ -57,7 +57,7 @@ export function createNarrative(db: Database.Database) {
      JOIN narratives ON narratives.id = narratives_fts.rowid
      WHERE narratives_fts MATCH ?
      ORDER BY narratives.created_at DESC
-     LIMIT 10`,
+     LIMIT 5`,
   )
 
   const forwardStmt = db.prepare(
@@ -100,7 +100,7 @@ export function createNarrative(db: Database.Database) {
      * Search for narratives. Three modes:
      * - No query → returns the latest narrative (session recovery)
      * - Numeric string → fetch by ID
-     * - Text → FTS5 keyword search, top 10 by created_at DESC
+     * - Text → FTS5 keyword search, top 5 by created_at DESC
      */
     search(query?: string): Narrative[] {
       // No query → latest narrative

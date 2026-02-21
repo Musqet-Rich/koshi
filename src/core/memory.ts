@@ -1,11 +1,81 @@
 import { statSync } from 'node:fs'
 import type Database from 'better-sqlite3'
-import type { MemoryResult } from '../types.js'
+import type { MemoryResult, TrustLevel } from '../types.js'
 import { createLogger } from './logger.js'
 // synonyms.ts is deprecated — the agent handles synonym expansion naturally
 // during memory_query tool calls. FTS queries now use simple quoted terms.
 
 const log = createLogger('memory')
+
+// ─── Injection Patterns ─────────────────────────────────────────────────────
+
+/** Patterns that indicate prompt injection or instruction override attempts. */
+const INJECTION_PATTERNS: { pattern: RegExp; label: string }[] = [
+  // Markdown-style system/instruction blocks
+  { pattern: /```system[\s\S]*?```/gi, label: 'markdown-system-block' },
+  { pattern: /```instruction[\s\S]*?```/gi, label: 'markdown-instruction-block' },
+  { pattern: /\[INST\][\s\S]*?\[\/INST\]/gi, label: 'inst-block' },
+  { pattern: /<<SYS>>[\s\S]*?<<\/SYS>>/gi, label: 'sys-block' },
+
+  // "Ignore previous instructions" style patterns
+  { pattern: /ignore\s+(all\s+)?previous\s+instructions/gi, label: 'ignore-previous-instructions' },
+  { pattern: /disregard\s+(all\s+)?previous\s+(instructions|context|rules)/gi, label: 'disregard-previous' },
+  { pattern: /forget\s+(all\s+)?previous\s+(instructions|context|rules)/gi, label: 'forget-previous' },
+  { pattern: /override\s+(all\s+)?previous\s+(instructions|context|rules)/gi, label: 'override-previous' },
+  { pattern: /you\s+are\s+now\s+(a|an)\s+/gi, label: 'role-override' },
+  { pattern: /new\s+system\s+prompt[:\s]/gi, label: 'new-system-prompt' },
+  { pattern: /system:\s*you\s+are/gi, label: 'system-role-injection' },
+  { pattern: /\bact\s+as\s+(if\s+)?(you\s+are\s+|a\s+|an\s+)/gi, label: 'act-as-injection' },
+]
+
+export interface SanitizeResult {
+  content: string
+  stripped: { label: string; match: string }[]
+}
+
+/**
+ * Sanitize memory content before storage.
+ *
+ * Strips obvious injection patterns (system blocks, instruction overrides)
+ * and returns both the cleaned content and details of what was stripped.
+ * The caller is responsible for logging stripped content to security_events.
+ */
+export function sanitizeMemoryContent(raw: string): SanitizeResult {
+  let content = raw
+  const stripped: { label: string; match: string }[] = []
+
+  for (const { pattern, label } of INJECTION_PATTERNS) {
+    // Reset lastIndex for global regexes
+    pattern.lastIndex = 0
+    let match: RegExpExecArray | null
+    while ((match = pattern.exec(content)) !== null) {
+      stripped.push({ label, match: match[0].slice(0, 200) })
+    }
+    // Remove all occurrences
+    content = content.replace(pattern, '')
+  }
+
+  // Collapse leftover whitespace from removals
+  content = content.replace(/\n{3,}/g, '\n\n').trim()
+
+  return { content, stripped }
+}
+
+/**
+ * Determine trust_level based on the source parameter.
+ *
+ * - 'high': user-provided content (direct user input)
+ * - 'medium': model-extracted content (agent/conversation extraction)
+ * - 'low': sub-agent output or external sources
+ */
+export function determineTrustLevel(source?: string): TrustLevel {
+  if (!source) return 'medium'
+  const s = source.toLowerCase()
+  if (s === 'user' || s === 'user-input' || s === 'direct') return 'high'
+  if (s === 'sub-agent' || s === 'sub_agent' || s === 'external' || s === 'plugin') return 'low'
+  // 'agent', 'conversation', 'model', etc. → medium
+  return 'medium'
+}
 
 /** Parse a human-readable size string like "100MB" into bytes. */
 function parseSize(size: string): number {
@@ -28,6 +98,7 @@ interface MemoryRow {
   content: string
   source: string | null
   tags: string | null
+  trust_level: string | null
   score: number
   created_at: string
   last_hit_at: string | null
@@ -37,7 +108,11 @@ interface MemoryRow {
 export function createMemory(db: Database.Database) {
   // Prepare statements
   const insertStmt = db.prepare(
-    `INSERT INTO memories (content, source, tags, session_id, score, narrative_id) VALUES (?, ?, ?, ?, 0, ?)`,
+    `INSERT INTO memories (content, source, tags, trust_level, session_id, score, narrative_id) VALUES (?, ?, ?, ?, ?, 0, ?)`,
+  )
+
+  const securityEventStmt = db.prepare(
+    `INSERT INTO security_events (event_type, source, detail) VALUES (?, ?, ?)`,
   )
 
   const matchStmt = db.prepare(
@@ -61,15 +136,53 @@ export function createMemory(db: Database.Database) {
 
   const getStmt = db.prepare(`SELECT id, content, source, tags, score FROM memories WHERE id = ?`)
 
-  const deleteStmt = db.prepare(`DELETE FROM memories WHERE id = ?`)
-
   const countStmt = db.prepare(`SELECT COUNT(*) AS cnt FROM memories`)
 
   const lowestStmt = db.prepare(`SELECT id FROM memories ORDER BY score ASC LIMIT ?`)
 
   return {
     store(content: string, source?: string, tags?: string, sessionId?: string, narrativeId?: number): number {
-      const result = insertStmt.run(content, source ?? null, tags ?? null, sessionId ?? null, narrativeId ?? null)
+      // Sanitize content before storage
+      const { content: cleanContent, stripped } = sanitizeMemoryContent(content)
+
+      // Log security events for any stripped injection patterns
+      if (stripped.length > 0) {
+        for (const s of stripped) {
+          securityEventStmt.run(
+            'injection_stripped',
+            source ?? 'unknown',
+            `Pattern: ${s.label} | Match: ${s.match}`,
+          )
+        }
+        log.warn('Injection patterns stripped from memory content', {
+          source: source ?? 'unknown',
+          patternsStripped: stripped.length,
+          labels: stripped.map((s) => s.label).join(', '),
+        })
+      }
+
+      // Skip storing if sanitization removed all meaningful content
+      if (!cleanContent || cleanContent.length < 2) {
+        log.warn('Memory content empty after sanitization, skipping store', { source })
+        securityEventStmt.run(
+          'memory_rejected',
+          source ?? 'unknown',
+          'Content empty after sanitization',
+        )
+        return -1
+      }
+
+      // Determine trust level from source
+      const trustLevel = determineTrustLevel(source)
+
+      const result = insertStmt.run(
+        cleanContent,
+        source ?? null,
+        tags ?? null,
+        trustLevel,
+        sessionId ?? null,
+        narrativeId ?? null,
+      )
       return Number(result.lastInsertRowid)
     },
 
@@ -156,6 +269,7 @@ export function createMemory(db: Database.Database) {
         content: s.row.content,
         source: s.row.source ?? undefined,
         tags: s.row.tags ?? undefined,
+        trustLevel: (s.row.trust_level as TrustLevel) ?? 'medium',
         score: s.row.score,
         rank: i + 1,
         finalRank: Math.round(s.finalRank * 1000) / 1000,
@@ -168,10 +282,6 @@ export function createMemory(db: Database.Database) {
 
     demote(id: number, weight = 1): void {
       demoteStmt.run(weight, id)
-    },
-
-    forget(id: number): void {
-      deleteStmt.run(id)
     },
 
     /**

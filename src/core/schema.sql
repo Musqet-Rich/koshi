@@ -35,6 +35,7 @@ CREATE TABLE IF NOT EXISTS memories (
   content TEXT NOT NULL,
   source TEXT,
   tags TEXT,
+  trust_level TEXT DEFAULT 'medium',
   created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
   last_hit_at DATETIME,
   score INTEGER DEFAULT 0,
@@ -118,6 +119,7 @@ CREATE TABLE IF NOT EXISTS tasks (
   skill TEXT,
   depends_on TEXT DEFAULT '[]',
   status TEXT NOT NULL DEFAULT 'pending' CHECK(status IN ('pending', 'blocked', 'running', 'completed', 'failed')),
+  failure_reason TEXT,
   agent_result_id INTEGER REFERENCES agent_results(id),
   created_at TEXT NOT NULL DEFAULT (datetime('now'))
 );
@@ -154,6 +156,28 @@ CREATE INDEX IF NOT EXISTS idx_buffer_unrouted ON buffer(routed, priority DESC, 
 CREATE INDEX IF NOT EXISTS idx_buffer_conversation ON buffer(conversation, received_at);
 CREATE INDEX IF NOT EXISTS idx_buffer_retention ON buffer(routed, received_at);
 
+CREATE TABLE IF NOT EXISTS skills (
+  name TEXT PRIMARY KEY,
+  description TEXT NOT NULL,
+  triggers TEXT NOT NULL DEFAULT '[]',
+  content TEXT NOT NULL,
+  created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+  updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE TABLE IF NOT EXISTS cron_jobs (
+  id TEXT PRIMARY KEY,
+  name TEXT NOT NULL,
+  schedule_at TEXT NOT NULL,
+  repeat_cron TEXT,
+  payload_type TEXT NOT NULL,
+  payload TEXT NOT NULL,
+  created_at TEXT NOT NULL,
+  status TEXT DEFAULT 'pending'
+);
+
+CREATE INDEX IF NOT EXISTS idx_cron_jobs_status ON cron_jobs(status);
+
 CREATE TABLE IF NOT EXISTS token_usage (
   id INTEGER PRIMARY KEY,
   agent_run_id TEXT,
@@ -162,5 +186,13 @@ CREATE TABLE IF NOT EXISTS token_usage (
   output_tokens INTEGER,
   model TEXT,
   cost_usd REAL,
+  created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE TABLE IF NOT EXISTS security_events (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  event_type TEXT NOT NULL,
+  source TEXT,
+  detail TEXT,
   created_at DATETIME DEFAULT CURRENT_TIMESTAMP
 );

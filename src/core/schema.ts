@@ -35,6 +35,7 @@ CREATE TABLE IF NOT EXISTS memories (
   content TEXT NOT NULL,
   source TEXT,
   tags TEXT,
+  trust_level TEXT DEFAULT 'medium',
   created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
   last_hit_at DATETIME,
   score INTEGER DEFAULT 0,
@@ -117,6 +118,7 @@ CREATE TABLE IF NOT EXISTS tasks (
   skill TEXT,
   depends_on TEXT DEFAULT '[]',
   status TEXT NOT NULL DEFAULT 'pending' CHECK(status IN ('pending', 'blocked', 'running', 'completed', 'failed')),
+  failure_reason TEXT,
   agent_result_id INTEGER REFERENCES agent_results(id),
   created_at TEXT NOT NULL DEFAULT (datetime('now'))
 );
@@ -183,6 +185,14 @@ CREATE TABLE IF NOT EXISTS token_usage (
   output_tokens INTEGER,
   model TEXT,
   cost_usd REAL,
+  created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE TABLE IF NOT EXISTS security_events (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  event_type TEXT NOT NULL,
+  source TEXT,
+  detail TEXT,
   created_at DATETIME DEFAULT CURRENT_TIMESTAMP
 );
 `

@@ -180,6 +180,15 @@ server.tool(
   }),
 )
 
+server.tool(
+  'list_skills',
+  'List all available skills with their metadata (name, description, triggers, tools, source). Returns a concise index without full skill content.',
+  {},
+  async () => ({
+    content: [{ type: 'text' as const, text: await callKoshi('list_skills', {}) }],
+  }),
+)
+
 // ─── Agent Tools ─────────────────────────────────────────────────────────────
 
 server.tool(
