@@ -39,7 +39,8 @@ CREATE TABLE IF NOT EXISTS memories (
   last_hit_at DATETIME,
   score INTEGER DEFAULT 0,
   session_id TEXT,
-  narrative_id INTEGER REFERENCES narratives(id)
+  narrative_id INTEGER REFERENCES narratives(id),
+  task_id INTEGER REFERENCES tasks(id)
 );
 
 CREATE VIRTUAL TABLE IF NOT EXISTS memories_fts USING fts5(

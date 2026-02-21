@@ -27,8 +27,43 @@ export function createPromptBuilder(config: KoshiConfig) {
         skillMatches?: SkillRef[]
         loadedSkills?: LoadedSkill[]
         narrativeContext?: string
+        agentType?: 'coordinator' | 'worker'
+        task?: string
+        skillContent?: string
       } = {},
     ): string {
+      const agentType = opts.agentType ?? 'coordinator'
+
+      // ── Worker prompt: minimal, focused, no coordinator concerns ──────
+      if (agentType === 'worker') {
+        const sections: string[] = []
+
+        sections.push(
+          'You are a Koshi worker agent. Complete your assigned task thoroughly and return your findings.',
+        )
+
+        if (opts.task) {
+          sections.push(`## Task\n${opts.task}`)
+        }
+
+        if (opts.skillContent) {
+          sections.push(`## Skill\n${opts.skillContent}`)
+        }
+
+        sections.push(
+          `## Rules
+- Complete the task using your available tools
+- Be thorough and precise
+- Return your findings/output as your final response
+- Do NOT spawn sub-agents — you are the worker
+- Do NOT store memories — the coordinator handles curation
+- Do NOT use tools not listed in your skill's tool scope`,
+        )
+
+        return sections.join('\n\n')
+      }
+
+      // ── Coordinator prompt: identical to original behaviour ────────────
       const sections: string[] = [config.identity.soul]
 
       // Current time — essential for scheduling

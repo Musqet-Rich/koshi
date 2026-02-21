@@ -68,7 +68,7 @@ export async function main(): Promise<void> {
   const skillIndex = loadSkillIndex(externalSkillsDir, repoSkillsDir, db)
   promptBuilder.setSkillIndex(skillIndex)
 
-  const _taskManager = createTaskManager(db)
+  const taskManager = createTaskManager(db)
   const buffer = createBuffer(db)
   const router = createRouter(config, buffer)
 
@@ -163,10 +163,7 @@ export async function main(): Promise<void> {
 
   const agentManager = createAgentManager({
     config,
-    getModel,
-    sessionManager,
     promptBuilder,
-    memory,
     db,
     notify: notifyUser,
   })
@@ -193,6 +190,7 @@ export async function main(): Promise<void> {
     narrative,
     agentManager,
     getChannel: (name: string) => channelMap.get(name),
+    taskManager,
   })
   mainLoop.start()
 

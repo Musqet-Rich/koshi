@@ -172,6 +172,19 @@ export interface Task {
   createdAt: string
 }
 
+/** Raw SQLite row shape for the tasks table. */
+export interface TaskRow {
+  id: number
+  project_id: string | null
+  title: string
+  context: string | null
+  skill: string | null
+  depends_on: string
+  status: string
+  agent_result_id: number | null
+  created_at: string
+}
+
 export interface CreateTaskOptions {
   title: string
   projectId?: string
@@ -207,6 +220,16 @@ export interface Narrative {
   previousNarrativeId: number | null
   topic: string | null
   createdAt: string
+}
+
+/** Raw SQLite row shape for the narratives table. */
+export interface NarrativeRow {
+  id: number
+  summary: string
+  memory_ids: string
+  previous_narrative_id: number | null
+  topic: string | null
+  created_at: string
 }
 
 // ─── Memory ──────────────────────────────────────────────────────────────────

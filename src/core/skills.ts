@@ -215,3 +215,29 @@ export function updateSkill(input: {
   log.info(`Updated skill: ${input.name}`)
   return `Updated skill "${input.name}"`
 }
+
+/** Get full skill entries with source/filePath info (for agent spawning) */
+export function getSkillEntries(): SkillEntry[] {
+  return [...skillIndex]
+}
+
+/**
+ * Get the raw file content of a skill (including frontmatter).
+ * For file-based skills, reads the file directly.
+ * For DB-based skills, returns the stored content (no frontmatter).
+ */
+export function getSkillRawContent(name: string): string | null {
+  const skill = skillIndex.find((s) => s.name === name)
+  if (!skill) return null
+
+  if (skill.source === 'file' && skill.filePath) {
+    return readFileSync(skill.filePath, 'utf-8')
+  }
+
+  if (skill.source === 'db' && _db) {
+    const row = _db.prepare('SELECT content FROM skills WHERE name = ?').get(name) as { content: string } | undefined
+    return row?.content ?? null
+  }
+
+  return null
+}

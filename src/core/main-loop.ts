@@ -9,6 +9,7 @@ import type { createMemory } from './memory.js'
 import type { createNarrative } from './narrative.js'
 import type { createPromptBuilder } from './prompt.js'
 import type { createRouter } from './router.js'
+import type { createTaskManager } from './tasks.js'
 import type { createSessionManager } from './sessions.js'
 import { createSkill, getSkillContent, matchSkills, updateSkill } from './skills.js'
 import type { WsActivityUpdate } from './ws.js'
@@ -293,7 +294,77 @@ const CRON_TOOLS: Tool[] = [
   },
 ]
 
+const TASK_TOOLS: Tool[] = [
+  {
+    name: 'task_create',
+    description:
+      'Create a new task. If depends_on references tasks that are not yet completed, the task will be created with status blocked instead of pending.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        title: { type: 'string', description: 'Short descriptive title for the task' },
+        context: { type: 'string', description: 'Additional context or instructions (optional)' },
+        skill: { type: 'string', description: 'Skill name to associate with the task' },
+        depends_on: {
+          type: 'array',
+          items: { type: 'number' },
+          description: 'Array of task IDs this task depends on (optional)',
+        },
+        project_id: { type: 'number', description: 'Project ID to associate with (optional)' },
+      },
+      required: ['title', 'skill'],
+    },
+  },
+  {
+    name: 'task_list',
+    description: 'List tasks, optionally filtered by project_id and/or status.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        project_id: { type: 'number', description: 'Filter by project ID (optional)' },
+        status: {
+          type: 'string',
+          enum: ['pending', 'blocked', 'running', 'completed', 'failed'],
+          description: 'Filter by status (optional)',
+        },
+      },
+    },
+  },
+  {
+    name: 'task_update',
+    description: 'Update a task status.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        id: { type: 'number', description: 'Task ID to update' },
+        status: {
+          type: 'string',
+          enum: ['pending', 'blocked', 'running', 'completed', 'failed'],
+          description: 'New status for the task',
+        },
+      },
+      required: ['id'],
+    },
+  },
+]
+
 // ─── Tool Execution ──────────────────────────────────────────────────────────
+
+/** Check all blocked tasks and unblock any whose dependencies are all completed */
+function unblockDependents(taskManager: ReturnType<typeof createTaskManager>): void {
+  const blocked = taskManager.list({ status: 'blocked' })
+  for (const task of blocked) {
+    if (task.dependsOn.length === 0) continue
+    const allDone = task.dependsOn.every((depId) => {
+      const dep = taskManager.get(depId)
+      return dep?.status === 'completed'
+    })
+    if (allDone) {
+      taskManager.update(task.id, { status: 'pending' })
+      log.info('Task unblocked', { taskId: task.id, title: task.title })
+    }
+  }
+}
 
 function executeTool(
   toolCall: ToolCall,
@@ -304,6 +375,7 @@ function executeTool(
   _batch?: { channel: string; conversation: string },
   _sessionManager?: ReturnType<typeof createSessionManager>,
   narrative?: ReturnType<typeof createNarrative>,
+  taskManager?: ReturnType<typeof createTaskManager>,
 ): string {
   const { name, input } = toolCall
 
@@ -417,6 +489,10 @@ function executeTool(
               ],
             })
           }
+          // Check for tasks whose dependencies are now all completed
+          if (taskManager) {
+            unblockDependents(taskManager)
+          }
         })
         .catch((err) => {
           const error = err instanceof Error ? err.message : String(err)
@@ -502,6 +578,46 @@ function executeTool(
       if (results.length === 0) return 'No narratives found.'
       return JSON.stringify(results)
     }
+    case 'task_create': {
+      if (!taskManager) return 'Task manager not available'
+      const title = input.title as string
+      const context = (input.context as string) ?? undefined
+      const skill = input.skill as string
+      const dependsOn = (input.depends_on as number[]) ?? []
+      const projectId = input.project_id != null ? String(input.project_id) : undefined
+      // Determine status: blocked if any dependency is not completed
+      let status: 'pending' | 'blocked' = 'pending'
+      if (dependsOn.length > 0) {
+        const hasUnfinished = dependsOn.some((depId) => {
+          const dep = taskManager.get(depId)
+          return !dep || dep.status !== 'completed'
+        })
+        if (hasUnfinished) status = 'blocked'
+      }
+      const id = taskManager.create({ title, context, skill, dependsOn, projectId, status })
+      return JSON.stringify({ id, message: 'Task created' })
+    }
+    case 'task_list': {
+      if (!taskManager) return 'Task manager not available'
+      const projectId = input.project_id != null ? String(input.project_id) : undefined
+      const status = (input.status as string) ?? undefined
+      const tasks = taskManager.list({
+        projectId,
+        status: status as import('../types.js').TaskStatus | undefined,
+      })
+      return JSON.stringify(tasks)
+    }
+    case 'task_update': {
+      if (!taskManager) return 'Task manager not available'
+      const id = input.id as number
+      const status = input.status as import('../types.js').TaskStatus | undefined
+      taskManager.update(id, { status })
+      // After updating a task (especially to 'completed'), unblock dependents
+      if (status === 'completed' ) {
+        unblockDependents(taskManager)
+      }
+      return JSON.stringify({ message: 'Task updated' })
+    }
     default:
       return `Unknown tool: ${name}`
   }
@@ -519,8 +635,9 @@ export function createMainLoop(opts: {
   narrative: ReturnType<typeof createNarrative>
   agentManager: ReturnType<typeof createAgentManager>
   getChannel: (name: string) => ChannelPlugin | undefined
+  taskManager: ReturnType<typeof createTaskManager>
 }) {
-  const { config, router, getModel, sessionManager, promptBuilder, memory, narrative, agentManager, getChannel } = opts
+  const { config, router, getModel, sessionManager, promptBuilder, memory, narrative, agentManager, getChannel, taskManager } = opts
   let timer: ReturnType<typeof setInterval> | null = null
   let processing = false
   let sessionTokensIn = 0
@@ -626,7 +743,7 @@ export function createMainLoop(opts: {
       // No automatic pre-injection.
 
       // Build system prompt
-      const allTools = [...MAIN_TOOLS, ...MEMORY_TOOLS, ...NARRATIVE_TOOLS, ...SKILL_TOOLS, ...CRON_TOOLS]
+      const allTools = [...MAIN_TOOLS, ...MEMORY_TOOLS, ...NARRATIVE_TOOLS, ...SKILL_TOOLS, ...CRON_TOOLS, ...TASK_TOOLS]
 
       // Match skills against user message and auto-load content
       const skillMatches = matchSkills(userContent)
@@ -706,7 +823,7 @@ export function createMainLoop(opts: {
 
         // Execute each tool and add results
         for (const tc of response.toolCalls) {
-          const result = executeTool(tc, memory, config, agentManager, router, batch, sessionManager, narrative)
+          const result = executeTool(tc, memory, config, agentManager, router, batch, sessionManager, narrative, taskManager)
           log.info('Tool result', { tool: tc.name, resultLength: result.length })
           modelMessages.push({
             role: 'tool',
@@ -868,7 +985,7 @@ ${recentExchange.slice(0, 2000)}`
 
     /** Execute a tool call — used by the MCP tool API */
     callTool(toolCall: ToolCall): string {
-      return executeTool(toolCall, memory, config, agentManager, router, undefined, sessionManager, narrative)
+      return executeTool(toolCall, memory, config, agentManager, router, undefined, sessionManager, narrative, taskManager)
     },
   }
 }
