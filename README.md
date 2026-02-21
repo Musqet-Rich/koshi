@@ -57,6 +57,15 @@ pnpm dev        # run daemon with tsx (no build step)
 
 ## Documentation
 
+- [Architecture Overview](architecture/overview.md) — system design and config reference
+- [Memory Architecture](architecture/memory.md) — FTS5, ranking, pruning, model-driven recall
+- [Narrative Memory](architecture/narrative.md) — reasoning arcs, chain-walking, session recovery
+- [Agent Architecture](architecture/agents.md) — coordinator, specialists, skills, task dependency graphs
+- [Task Management](architecture/tasks.md) — task lifecycle, dependencies, cron integration
+- [Message Buffer](architecture/buffer.md) — persistent message queue, batching, routing outcomes
+- [Process Architecture](architecture/daemon.md) — daemon lifecycle, Fastify, IPC, CLI
+- [System Prompt](architecture/system-prompt.md) — prompt structure and design decisions
+- [Proof of Concept](architecture/poc.md) — v0.0.1 scope and success criteria
 - [Claude Code Integration](docs/claude-code-integration.md) — using Max/Pro subscription as LLM backend
 
 ## Design Philosophy
@@ -72,12 +81,13 @@ Everything else is composition.
 
 ## Architecture
 
-- **Single Node.js process** — Fastify server, plugin architecture
-- **Plugins**: channels (bidirectional), services (outbound), listeners (inbound)
+- **[Single Node.js process](architecture/daemon.md)** — Fastify server, plugin architecture
+- **[Plugins](architecture/overview.md#plugins)**: channels (bidirectional), services (outbound), listeners (inbound)
 - **TUI** ships with core — `src/tui/` contains both the channel plugin and the Ink terminal app
-- **Memory** — SQLite + FTS5 with reinforcement scoring
-- **Message buffer** — persistent SQLite queue with configurable batching
-- **Smart routing** — pattern-matching rules at router level, no LLM needed for routing
+- **[Memory](architecture/memory.md)** — SQLite + FTS5 with model-driven recall and reinforcement scoring
+- **MCP bridge** — native tools exposed as MCP server for Claude Code integration
+- **[Message buffer](architecture/buffer.md)** — persistent SQLite queue with configurable batching
+- **[Smart routing](architecture/overview.md#routing-rules)** — pattern-matching rules at router level, no LLM needed for routing
 
 ## Licence
 

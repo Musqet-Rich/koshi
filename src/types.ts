@@ -158,56 +158,55 @@ export interface RouteRule {
 
 // ─── Tasks ───────────────────────────────────────────────────────────────────
 
-export type TaskStatus = 'open' | 'in_progress' | 'done' | 'failed'
-export type TaskPriority = 'low' | 'normal' | 'high' | 'critical'
+export type TaskStatus = 'pending' | 'blocked' | 'running' | 'completed' | 'failed'
 
 export interface Task {
   id: number
+  projectId?: string
   title: string
-  description?: string
+  context?: string
+  skill?: string
+  dependsOn: number[]
   status: TaskStatus
-  priority: TaskPriority
-  template?: string
-  source?: 'agent' | 'route' | 'cron' | 'cli'
-  routeMatch?: string
-  agentRunId?: string
-  project?: string
-  blockedBy: number[]
+  agentResultId?: number
   createdAt: string
-  startedAt?: string
-  completedAt?: string
-  result?: string
-}
-
-export interface TaskRun {
-  id: number
-  taskId: number
-  agentRunId: string
-  template?: string
-  model?: string
-  status: 'completed' | 'failed' | 'timed_out'
-  startedAt: string
-  finishedAt?: string
-  result?: string
-  error?: string
 }
 
 export interface CreateTaskOptions {
   title: string
-  description?: string
-  template?: string
-  priority?: TaskPriority
-  source?: Task['source']
-  project?: string
-  blockedBy?: number[]
-  autoRun?: boolean
+  projectId?: string
+  context?: string
+  skill?: string
+  dependsOn?: number[]
+  status?: TaskStatus
 }
 
 export interface TaskFilter {
   status?: TaskStatus
-  priority?: TaskPriority
-  project?: string
-  source?: Task['source']
+  projectId?: string
+  skill?: string
+}
+
+// ─── Agent Results ──────────────────────────────────────────────────────────
+
+export interface AgentResultRow {
+  id: number
+  taskId?: number
+  skillUsed?: string
+  output: string
+  memoryIds: number[]
+  createdAt: string
+}
+
+// ─── Narratives ─────────────────────────────────────────────────────────────
+
+export interface Narrative {
+  id: number
+  summary: string
+  memoryIds: number[]
+  previousNarrativeId: number | null
+  topic: string | null
+  createdAt: string
 }
 
 // ─── Memory ──────────────────────────────────────────────────────────────────

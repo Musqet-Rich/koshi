@@ -2,6 +2,7 @@
 name: skill-writing
 description: How to create and update skills that teach you new capabilities
 triggers: [skill, learn, teach, pattern, recipe, workflow, "how to handle", "new skill"]
+tools: [create_skill, update_skill, list_skills]
 ---
 
 ## Creating Skills

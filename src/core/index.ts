@@ -13,6 +13,7 @@ import { closeDatabase, initDatabase } from './db.js'
 import { createLogger, fastifyLogger, setLogLevel } from './logger.js'
 import { createMainLoop } from './main-loop.js'
 import { createMemory } from './memory.js'
+import { createNarrative } from './narrative.js'
 import { loadPlugins } from './plugins.js'
 import { createPromptBuilder } from './prompt.js'
 import { createRouter } from './router.js'
@@ -56,6 +57,7 @@ export async function main(): Promise<void> {
 
   // 4. Initialize core systems
   const memory = createMemory(db)
+  const narrative = createNarrative(db)
   const sessionManager = createSessionManager(db)
   const promptBuilder = createPromptBuilder(config)
 
@@ -188,6 +190,7 @@ export async function main(): Promise<void> {
     sessionManager,
     promptBuilder,
     memory,
+    narrative,
     agentManager,
     getChannel: (name: string) => channelMap.get(name),
   })

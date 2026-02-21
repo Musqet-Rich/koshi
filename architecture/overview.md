@@ -17,7 +17,7 @@
 
 ## What Koshi IS
 
-Koshi is a Node.js process running as a daemon. It's a hub/router/switchboard — messages come in from channels, get routed, and go out. Claude is an external service Koshi calls via the Anthropic API, not something that lives inside it. The Anthropic connection is structurally the same as any other plugin connection (Telegram, Nostr, etc.) — just the one that thinks.
+Koshi is a Node.js process running as a [daemon](./daemon.md). It's a hub/router/switchboard — messages come in from channels, get routed, and go out. Claude is an external service Koshi calls via the Anthropic API, not something that lives inside it. The Anthropic connection is structurally the same as any other plugin connection (Telegram, Nostr, etc.) — just the one that thinks.
 
 There is no separate "daemon" vs "server" concept. Koshi is the process. Period.
 
@@ -27,15 +27,26 @@ The kernel. Always present, no plugins needed.
 
 ```
 src/core/
-├── server.ts       # Fastify instance — HTTP, WebSocket, lifecycle
+├── index.ts        # Bootstrap, init, plugin loading, startup
+├── main-loop.ts    # Main agent loop — polls router, sends to model, tool dispatch
 ├── router.ts       # Message routing — channel → buffer → agent/rules
-├── buffer.ts       # Message buffer with provenance (persistent)
-├── memory.ts       # Memory store interface — store, query, forget
-├── tools.ts        # Tool registry — schema declaration + dispatch
+├── buffer.ts       # [Message buffer](./buffer.md) with provenance (persistent)
+├── memory.ts       # [Memory](./memory.md) store — store, query, update, reinforce, demote, prune
+├── prompt.ts       # [System prompt](./system-prompt.md) builder — identity, tools, skills, recall rules
 ├── config.ts       # Config loading, validation (koshi.yaml)
-├── cron.ts         # Scheduled tasks, timers
+├── cron.ts         # Scheduled jobs — one-shot timer scheduler backed by SQLite
+├── sessions.ts     # Session persistence — SQLite-backed message history
+├── skills.ts       # Skill registry — file-based + runtime-created skills
+├── agents.ts       # [Sub-agent](./agents.md) manager — spawn, track, collect results
+├── compaction.ts   # Session compaction when context nears limits
+├── schema.ts       # SQLite schema — memories, archive, tasks, sessions, buffer, etc.
+├── mcp-server.ts   # MCP server — exposes native tools for Claude Code integration
+├── tool-api.ts     # HTTP tool API endpoint (/api/tools/call)
 ├── plugins.ts      # Plugin loader — discovers, validates, registers
-└── index.ts        # Bootstrap, Fastify init, plugin loading, startup
+├── db.ts           # SQLite database init
+├── ws.ts           # WebSocket broadcast
+├── secrets.ts      # Secret management (secrets.yaml)
+└── logger.ts       # Structured logging
 ```
 
 ## Plugins
@@ -102,7 +113,7 @@ koshi.fastify.get('/health', handler)
 
 Smart routing without burning LLM tokens. A pattern-matching rule engine at the router level.
 
-Incoming messages are matched against YAML rules — can auto-spawn sub-agents without main agent involvement:
+Incoming messages are matched against YAML rules — can auto-spawn [sub-agents](./agents.md) without main agent involvement:
 
 ```yaml
 routes:
@@ -112,7 +123,7 @@ routes:
       action: opened
     action:
       spawn:
-        template: reviewer
+        skill: code-review
         task: "Review PR #{{number}}: {{title}}"
 
   - match:
@@ -122,14 +133,14 @@ routes:
       forward: main-agent    # default: send to the main agent
 ```
 
-The main agent can WRITE these routing rules (modify koshi.yaml), becoming an architect that builds automation rather than a worker that processes everything. This saves massive tokens — no more burning Opus turns on noise.
+The coordinator can WRITE these routing rules (modify koshi.yaml), becoming an architect that builds automation rather than a worker that processes everything. This saves massive tokens — no more burning Opus turns on noise.
 
-## Message Buffer
+## [Message Buffer](./buffer.md)
 
 All incoming messages pass through the persistent message buffer before the agent sees them. See [`buffer.md`](buffer.md) for the full design.
 
 Key properties:
-- **Persistent** — SQLite (`buffer.db`), survives restarts. Messages received during downtime are waiting when Koshi comes back.
+- **Persistent** — SQLite (`data/koshi.db`), survives restarts. Messages received during downtime are waiting when Koshi comes back.
 - **Provenance** — every message carries channel, sender, conversation, timestamp, and priority.
 - **Batched delivery** — messages are always delivered as arrays. The router collects messages in a configurable window (default 500ms) and groups by conversation/source before delivery. Multiple rapid messages become one batch → one agent turn → fewer tokens.
 - **Priority ordering** — when the main agent is ready, it pulls the highest-priority unprocessed batch. User DMs > webhooks > notifications.
@@ -187,22 +198,12 @@ routes:
       event: pull_request
     action:
       spawn:
-        template: reviewer
+        skill: code-review
         task: "Review PR #{{number}}"
 
-templates:
-  coder:
-    tools: [exec, files]
-    model: local
-    timeout: 300
-  researcher:
-    tools: [web, files]
-    model: main
-    timeout: 120
-  reviewer:
-    tools: [exec, files, web]
-    model: opus
-    timeout: 300
+agents:
+  maxConcurrent: 3
+  defaultTimeout: 300       # 5 minutes
 
 buffer:
   retentionDays: 7
@@ -210,6 +211,9 @@ buffer:
 
 memory:
   backend: sqlite
+  maxSize: 100MB              # pruning triggers when exceeded
+  pruneSchedule: "0 4 * * *"  # when to check (cron syntax)
+  prunePercent: 1             # archive bottom 1% when limit hit
 
 sessions:
   maxMessages: 200        # per session, oldest pruned
@@ -220,13 +224,13 @@ cron:
     schedule: "30 7 * * *"
     task:
       title: "Publish the morning briefing"
-      template: "researcher"
+      skill: "morning-briefing"
       autoRun: true
 ```
 
 ### Named Models
 
-Models are defined once in `koshi.yaml` under the `models:` section with user-chosen names, then referenced by name everywhere else — agent config, templates, routing rules.
+Models are defined once in `koshi.yaml` under the `models:` section with user-chosen names, then referenced by name everywhere else — agent config, [skill frontmatter](./agents.md#skill-defined-tool-scope), routing rules. Skills define both tool scope and model selection via their frontmatter `model:` field. See [agents.md](./agents.md#model-selection) for details.
 
 A **model plugin** is a service plugin that implements a standard interface:
 
@@ -243,7 +247,7 @@ Key properties:
 - **One definition, many references.** Change a model definition once, it ripples everywhere it's referenced.
 - **Multi-model by default.** Different tasks use different models — cheap/fast for conversation, powerful for complex reasoning, local for private code.
 - **`agent.model`** designates which named model the main agent thread uses.
-- **Templates reference by name.** No hardcoded model strings scattered through config.
+- **Skills and spawn calls reference by name.** No hardcoded model strings scattered through config.
 
 ## Data (`data/`)
 
@@ -271,7 +275,7 @@ koshi/
 
 ## Sessions
 
-SQLite-backed session persistence. Messages stored as rows in the sessions table, same database as memory, tasks, and buffer.
+SQLite-backed session persistence. Messages stored as rows in the sessions table, same database as [memory](./memory.md), [tasks](./tasks.md), and [buffer](./buffer.md).
 
 Sessions are bounded to prevent unbounded growth:
 

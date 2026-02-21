@@ -37,7 +37,7 @@ interface MemoryRow {
 export function createMemory(db: Database.Database) {
   // Prepare statements
   const insertStmt = db.prepare(
-    `INSERT INTO memories (content, source, tags, session_id, score) VALUES (?, ?, ?, ?, 0)`,
+    `INSERT INTO memories (content, source, tags, session_id, score, narrative_id) VALUES (?, ?, ?, ?, 0, ?)`,
   )
 
   const matchStmt = db.prepare(
@@ -68,8 +68,8 @@ export function createMemory(db: Database.Database) {
   const lowestStmt = db.prepare(`SELECT id FROM memories ORDER BY score ASC LIMIT ?`)
 
   return {
-    store(content: string, source?: string, tags?: string, sessionId?: string): number {
-      const result = insertStmt.run(content, source ?? null, tags ?? null, sessionId ?? null)
+    store(content: string, source?: string, tags?: string, sessionId?: string, narrativeId?: number): number {
+      const result = insertStmt.run(content, source ?? null, tags ?? null, sessionId ?? null, narrativeId ?? null)
       return Number(result.lastInsertRowid)
     },
 

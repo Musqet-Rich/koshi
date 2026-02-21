@@ -25,24 +25,13 @@
 
 **overview.md** had a dedicated TUI section describing the TUI in detail, then listed "No TUI" under "What's NOT here". This was clearly a copy-paste artifact. Changed to "No web dashboard" which is actually accurate.
 
-### 2. Memory retrieval: retry or no retry?
+### 2. Memory retrieval: retry or no retry? (RESOLVED)
 
-**memory.md** contradicts itself:
-- Early in the doc: "If a keyword query returns nothing, the LLM reformulates with synonyms and retries"
-- Later in the retrieval flow diagram: "No results → proceed without memory (don't loop)"
-- Even later: "If the first expanded query returns nothing, the memory genuinely doesn't exist — don't waste API calls retrying"
+Memory recall is now fully model-driven. The agent queries memory mid-call via the `memory_query` tool — up to 3 rounds per message, each informed by previous results. No automatic pre-injection, no static synonym expansion. The contradiction has been resolved by removing the runtime-side query entirely and letting the agent control the full recall loop.
 
-The doc evolved mid-writing. The final position (expand synonyms BEFORE querying, single query, no retries) is the better design. The early mention of retries should be removed or aligned.
+### 3. Main thread tools — agents.md vs overview.md (RESOLVED)
 
-### 3. Main thread tools — agents.md vs overview.md
-
-**agents.md** says the main thread has ONLY `spawn_agent`, `memory_query`, `memory_store` — "No other tools. No exec, no file I/O, no web fetching."
-
-**overview.md** lists tools config with `exec`, `files`, `web` as defaults — no mention that these are sub-agent-only.
-
-**daemon.md** config also shows `tools: [exec, files, web]` at the top level without clarifying these are for sub-agents.
-
-This is a significant architectural decision that needs consistent documentation across all files.
+The system prompt now explicitly lists forbidden tools by name (Read, Write, Edit, Bash, Glob, Grep, WebFetch, WebSearch, NotebookEdit) and states the reason: blocks main thread, bloats context. agents.md has been updated with the full permitted tools list. The `tools: [exec, files, web]` entries in templates are clearly sub-agent-only — these are referenced by agent templates, not the main thread.
 
 ### 4. Cron terminology
 
@@ -80,10 +69,10 @@ These are different schemas. The tasks.md version is richer and more consistent 
 ### Strengths
 
 - **Clear separation of concerns.** Core vs plugins, main thread vs sub-agents, durable tasks vs ephemeral agents. The layering is clean.
-- **FTS5 over embeddings is a strong call.** For a personal assistant with one user, keyword search + LLM reformulation is simpler, cheaper, and more debuggable than vector search. The "LLM handles synonyms" argument is sound.
-- **Structural delegation.** Making the main thread physically unable to run tools (not just instructed not to) is a better pattern than OpenClaw's convention-based delegation. Eliminates an entire class of mistakes.
+- **FTS5 over embeddings is a strong call.** For a personal assistant with one user, keyword search + model-driven recall is simpler, cheaper, and more debuggable than vector search. The "model IS the keyword extractor" approach works — no static synonym maps needed.
+- **Structural delegation.** The system prompt explicitly lists forbidden tools and the main thread's tool set doesn't include them. Combined with MCP-based tool scoping via `--allowedTools`, this is a better pattern than OpenClaw's convention-based delegation.
 - **Single config file.** `koshi.yaml` consolidating everything is a good DX decision.
-- **Memory hit counting.** Self-reinforcing relevance via `hit_count` is elegant and avoids complex scoring models.
+- **Memory scoring.** Reinforcement/demotion feedback loop with exponential weight formula (`Math.exp(score * 0.2)`) gives meaningful ranking that works in both directions. Recency uses `last_hit_at` so reinforced memories stay fresh.
 - **Transparent system prompt.** No hidden prompt injection is a genuine differentiator and trust builder.
 
 ### Weaknesses
@@ -110,8 +99,8 @@ These are different schemas. The tasks.md version is richer and more consistent 
 
 ## Suggestions
 
-1. **Resolve the retry contradiction in memory.md** — pick one approach and be consistent
-2. **Add a "tools are sub-agent-only" note to overview.md and daemon.md** config examples
+1. ~~**Resolve the retry contradiction in memory.md**~~ — DONE. Memory recall is now model-driven (up to 3 queries per message).
+2. ~~**Add a "tools are sub-agent-only" note to overview.md and daemon.md**~~ — DONE. System prompt lists forbidden tools explicitly. agents.md documents the full permitted/forbidden split.
 3. **Unify cron schema** between overview.md and tasks.md
 4. **Add server plugin to overview.md** plugin listing
 5. **Write an error-handling doc** or at least a section in daemon.md

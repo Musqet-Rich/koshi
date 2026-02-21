@@ -41,19 +41,22 @@ The system prompt is assembled per-turn based on what's relevant, not dumped who
 ### Structure
 
 ```
-┌─────────────────────────────────────┐
-│          System Prompt              │
-├─────────────────────────────────────┤
-│ 1. Identity (from koshi.yaml)       │  ~200 tokens, always present
-│ 2. Tools (auto-generated schemas)   │  only loaded tools
-│ 3. Relevant memories (queried)      │  top N by relevance to current msg
-│ 4. Active context (if any)          │  current task, open files, etc.
-└─────────────────────────────────────┘
+┌─────────────────────────────────────────┐
+│          System Prompt                  │
+├─────────────────────────────────────────┤
+│ 1. Identity (from koshi.yaml)           │  ~200 tokens, always present
+│ 2. Architecture & Tool Rules            │  forbidden tools, delegation model
+│ 3. Memory Recall Instructions           │  model-driven query protocol
+│ 4. Current Time                         │  UTC timestamp
+│ 5. Available Skills (index)             │  names + descriptions
+│ 6. Active Skills (if triggered)         │  full content for matched skills
+│ 7. Active context (if any)              │  current task, etc.
+└─────────────────────────────────────────┘
 ```
 
 ### 1. Identity
 
-From the `identity.soul` field in `koshi.yaml`. Plain text. The user writes it, the user owns it. No wrapping, no injection around it.
+From the `identity.soul` field in [`koshi.yaml`](./overview.md#config-koshiyaml). Plain text. The user writes it, the user owns it. No wrapping, no injection around it.
 
 ```yaml
 identity:
@@ -63,25 +66,49 @@ identity:
     Push back when the user is wrong. They respect directness.
 ```
 
-### 2. Tools
+### 2. Architecture & Tool Rules
 
-Auto-generated from loaded tool plugins. Each tool declares its name, description, and JSON schema. Koshi formats these for Claude's tool_use API — no prompt engineering needed, Claude handles tools natively.
+The prompt explicitly frames the agent as a [coordinator](./agents.md#coordinator-main-thread): "Think, decide, delegate — in that order. Never act directly."
 
-### 3. Relevant Memories
+**Forbidden tools** are listed by name with a clear reason:
+> Read, Write, Edit, Bash, Glob, Grep, WebFetch, WebSearch, NotebookEdit
+> Using them directly blocks the main thread, bloats your context window, and defeats the architecture.
 
-This is the key difference. Instead of dumping MEMORY.md (all memories) into every turn:
+These are Claude Code tools that are behaviorally forbidden (listed in the prompt). In the Claude Code/MCP bridge, they cannot be structurally removed — but the prompt instructs the coordinator not to use them.
 
-1. User sends a message
-2. Koshi extracts keywords / intent
-3. Queries memory DB: `SELECT * FROM memories WHERE ... ORDER BY relevance LIMIT 10`
-4. Injects only matching memories into system prompt
-5. Sends to Claude via the Anthropic service plugin
+**Permitted tools** are listed explicitly:
+- Scheduling: `schedule_job`, `cancel_job`, `list_jobs`
+- [Memory](./memory.md#tool-interface): `memory_store`, `memory_query`, `memory_update`, `memory_reinforce`, `memory_demote`
+- Skills: `load_skill`, `create_skill`, `update_skill`
+- [Delegation](./agents.md#spawn-signature): `spawn_agent`, `list_agents`, `read_file`
 
-If the user asks about "API authentication", only auth-related memories load. Not the refund proposal, not the Slack integration, not the nightly build notes.
+Note: `read_file` (an MCP tool for reading agent output files) is permitted and distinct from `Read` (a Claude Code file reading tool) which is forbidden. The coordinator uses `read_file` to access agent results.
 
-### 4. Active Context
+**Background spawning rule**: Always spawn agents with `run_in_background: true` unless the result is needed before responding. Respond immediately after spawning — do not wait.
 
-Optional, ephemeral. If the agent is mid-task (editing a file, reviewing a PR), that context stays attached until the task completes. Not permanently in the prompt.
+### 3. Memory Recall Instructions
+
+No automatic pre-injection. The system prompt instructs the agent to use the [model-driven recall](./memory.md#retrieval-flow) protocol:
+1. Read the user's message
+2. Identify key concepts, names, topics — the words that matter
+3. Call `memory_query` with targeted keywords (include natural synonyms)
+4. If the first query doesn't surface what's needed, query again with different terms — up to 3 queries per message
+5. Reinforce/demote recalled memories based on usefulness
+6. Then respond, grounded in what was found
+
+The model IS the keyword extractor — no static stop-word lists, no synonym thesaurus.
+
+Memory results include IDs in `[id:N]` format. The prompt instructs the agent to call `memory_reinforce(id)` when a memory helped or `memory_demote(id)` when it was irrelevant/outdated. This closes the [feedback loop](./memory.md#ranking).
+
+Short messages like "hi" or "ok" don't need memory queries. The agent uses judgment.
+
+### 4. Available Skills
+
+The [skill index](./agents.md#skill-defined-tool-scope) (name + one-line description) is always present. Full skill content is loaded when triggers match the user message or when the agent calls `load_skill`.
+
+### 5. Active Context
+
+Optional, ephemeral. If the agent is mid-task, that context stays attached until the task completes. Not permanently in the prompt.
 
 ## Safety
 
@@ -94,13 +121,13 @@ Koshi ships a default `safety.md` that's included in the identity section. The u
 Target: <2KB system prompt for a typical turn. Compare to OpenClaw's 10KB+.
 
 The savings come from:
-- No redundant context (memory is queried, not dumped)
+- No memory dumping (memory is model-driven via tool calls, not pre-injected)
 - No hidden boilerplate (no tool-call-style instructions Claude doesn't need)
-- No skill catalogue listing (tools are declared via API, not prompt text)
+- Skills loaded on demand (only matched skills included, not the full catalogue)
 - Identity is short (user writes what matters, not a template)
 
 ## Resolved Questions
 
 - **Cache memory query results across turns:** Skip for v1. SQLite FTS5 is sub-millisecond. Premature optimisation.
-- **First message cold start:** The user's message provides the keywords for memory lookup. A greeting like "Hi" needs no memory context. No special handling required.
-- **Mid-turn memory requests:** Yes. `memory_query` is a tool the main agent can call at any time during a turn.
+- **First message cold start:** The agent queries memory if the message warrants it. A greeting like "Hi" needs no memory query. No special handling required.
+- **Mid-turn memory requests:** Yes. `memory_query` is a tool the agent calls proactively during every non-trivial turn — up to 3 rounds per message.

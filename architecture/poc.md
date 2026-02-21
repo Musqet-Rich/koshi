@@ -7,11 +7,11 @@ Get Koshi working end-to-end: message in → route → agent thinks → response
 ## In Scope
 
 ### Core
-- Fastify server with plugin lifecycle
+- [Fastify server](./daemon.md) with plugin lifecycle
 - Message router with pattern-matching rules
-- Persistent message buffer (SQLite)
-- Config loader (koshi.yaml)
-- SQLite database (memory, tasks, sessions, buffer — one DB)
+- Persistent [message buffer](./buffer.md) (SQLite)
+- Config loader ([koshi.yaml](./overview.md#config-koshiyaml))
+- SQLite database ([memory](./memory.md), [tasks](./tasks.md), sessions, buffer — one DB)
 - Cron scheduler
 - Good logging throughout
 
@@ -21,12 +21,12 @@ Get Koshi working end-to-end: message in → route → agent thinks → response
 - `@koshi/autotest` — Automated test channel. Acts as a user — sends messages, receives responses, validates the full pipeline. Used for development iteration and bug-finding. Demonstrates the channel plugin interface works.
 - `@koshi/memory` — SQLite + FTS5 memory backend with reinforcement scoring.
 
-### Memory
-- FTS5 full-text search
-- Reinforcement scoring (reinforce +3, demote -1)
-- Size-based percentile pruning
-- Four tools: query, store, reinforce, demote
-- Synonym map (built-in, extensible)
+### [Memory](./memory.md)
+- FTS5 full-text search with sanitised queries (URL stripping, hyphen splitting, quoted terms)
+- [Reinforcement scoring](./memory.md#ranking) (reinforce +3, demote -1) with exponential weight formula
+- Size-based percentile [pruning](./memory.md#pruning) (cron job, archives to searchable table)
+- Five [tools](./memory.md#tool-interface): query, store, update, reinforce, demote
+- Model-driven recall (no automatic pre-injection, no static synonym maps)
 
 ### Sessions
 - SQLite-backed session persistence
@@ -45,7 +45,7 @@ Get Koshi working end-to-end: message in → route → agent thinks → response
 - Backup/restore CLI
 - systemd service generator
 - TOTP authentication
-- Memory relations (v2)
+- [Memory relations](./memory.md#future-relations-v2) (v2)
 
 ## Success Criteria
 
@@ -64,7 +64,8 @@ Get Koshi working end-to-end: message in → route → agent thinks → response
 The POC validates these architectural bets:
 - Fastify plugin model works for our use case
 - SQLite handles memory + tasks + sessions + buffer in one DB
-- FTS5 + synonym expansion provides good retrieval without embeddings
-- Structural delegation (main thread can't run tools) works in practice
+- FTS5 + [model-driven keyword extraction](./memory.md#retrieval-flow) provides good retrieval without embeddings
+- [Structural delegation](./agents.md) works in practice — the coordinator has a behaviorally forbidden tools list (enforced via prompt), while workers have structurally scoped tools (only their skill's tools are registered)
+- MCP bridge allows Claude Code to use Koshi's native tools
 - Routing rules successfully divert work from the main agent
 - Message batching reduces token usage

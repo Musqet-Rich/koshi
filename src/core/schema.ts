@@ -1,6 +1,35 @@
 import type Database from 'better-sqlite3'
 
 const SCHEMA_SQL = `
+CREATE TABLE IF NOT EXISTS narratives (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  summary TEXT NOT NULL,
+  memory_ids TEXT NOT NULL DEFAULT '[]',
+  previous_narrative_id INTEGER REFERENCES narratives(id),
+  topic TEXT,
+  created_at TEXT NOT NULL DEFAULT (datetime('now'))
+);
+
+CREATE VIRTUAL TABLE IF NOT EXISTS narratives_fts USING fts5(
+  summary,
+  topic,
+  content=narratives,
+  content_rowid=id
+);
+
+CREATE TRIGGER IF NOT EXISTS narratives_ai AFTER INSERT ON narratives BEGIN
+  INSERT INTO narratives_fts(rowid, summary, topic) VALUES (new.id, new.summary, new.topic);
+END;
+
+CREATE TRIGGER IF NOT EXISTS narratives_ad AFTER DELETE ON narratives BEGIN
+  INSERT INTO narratives_fts(narratives_fts, rowid, summary, topic) VALUES ('delete', old.id, old.summary, old.topic);
+END;
+
+CREATE TRIGGER IF NOT EXISTS narratives_au AFTER UPDATE ON narratives BEGIN
+  INSERT INTO narratives_fts(narratives_fts, rowid, summary, topic) VALUES ('delete', old.id, old.summary, old.topic);
+  INSERT INTO narratives_fts(rowid, summary, topic) VALUES (new.id, new.summary, new.topic);
+END;
+
 CREATE TABLE IF NOT EXISTS memories (
   id INTEGER PRIMARY KEY,
   content TEXT NOT NULL,
@@ -9,7 +38,8 @@ CREATE TABLE IF NOT EXISTS memories (
   created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
   last_hit_at DATETIME,
   score INTEGER DEFAULT 0,
-  session_id TEXT
+  session_id TEXT,
+  narrative_id INTEGER REFERENCES narratives(id)
 );
 
 CREATE VIRTUAL TABLE IF NOT EXISTS memories_fts USING fts5(
@@ -65,35 +95,29 @@ CREATE TRIGGER IF NOT EXISTS memories_archive_ad AFTER DELETE ON memories_archiv
   INSERT INTO memories_archive_fts(memories_archive_fts, rowid, content, tags, source) VALUES ('delete', old.id, old.content, old.tags, old.source);
 END;
 
-CREATE TABLE IF NOT EXISTS tasks (
-  id INTEGER PRIMARY KEY,
-  title TEXT NOT NULL,
-  description TEXT,
-  status TEXT DEFAULT 'open',
-  priority TEXT DEFAULT 'normal',
-  template TEXT,
-  source TEXT,
-  route_match TEXT,
-  agent_run_id TEXT,
-  project TEXT,
-  blocked_by TEXT DEFAULT '[]',
-  created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
-  started_at DATETIME,
-  completed_at DATETIME,
-  result TEXT
+DROP TABLE IF EXISTS task_runs;
+DROP TABLE IF EXISTS agent_results;
+DROP TABLE IF EXISTS tasks;
+
+CREATE TABLE IF NOT EXISTS agent_results (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  task_id INTEGER REFERENCES tasks(id),
+  skill_used TEXT,
+  output TEXT NOT NULL,
+  memory_ids TEXT DEFAULT '[]',
+  created_at TEXT NOT NULL DEFAULT (datetime('now'))
 );
 
-CREATE TABLE IF NOT EXISTS task_runs (
-  id INTEGER PRIMARY KEY,
-  task_id INTEGER REFERENCES tasks(id),
-  agent_run_id TEXT NOT NULL,
-  template TEXT,
-  model TEXT,
-  status TEXT,
-  started_at DATETIME,
-  finished_at DATETIME,
-  result TEXT,
-  error TEXT
+CREATE TABLE IF NOT EXISTS tasks (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  project_id TEXT,
+  title TEXT NOT NULL,
+  context TEXT,
+  skill TEXT,
+  depends_on TEXT DEFAULT '[]',
+  status TEXT NOT NULL DEFAULT 'pending' CHECK(status IN ('pending', 'blocked', 'running', 'completed', 'failed')),
+  agent_result_id INTEGER REFERENCES agent_results(id),
+  created_at TEXT NOT NULL DEFAULT (datetime('now'))
 );
 
 CREATE TABLE IF NOT EXISTS sessions (

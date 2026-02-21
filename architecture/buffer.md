@@ -5,7 +5,7 @@
 The message buffer sits between incoming connections (channels, listeners) and the agent. It is the single entry point for all inbound messages. Every message that enters Koshi passes through the buffer — no exceptions.
 
 Core guarantees:
-- **Never loses a message.** Persistent storage in SQLite (`buffer.db`), survives restarts.
+- **Never loses a message.** Persistent storage in SQLite (`data/koshi.db`), survives restarts.
 - **Always knows where it came from.** Every message carries full provenance metadata.
 - **Decouples ingestion from processing.** Channels write to the buffer; the router reads from it. They never interact directly.
 
@@ -71,13 +71,13 @@ interface MessageBatch {
 
 ## Routing
 
-After batching, each batch is matched against routing rules (defined in `koshi.yaml`). Three possible outcomes:
+After batching, each batch is matched against [routing rules](./overview.md#routing-rules) (defined in `koshi.yaml`). Three possible outcomes:
 
 ### → Main agent
 Default path. The batch is queued for the main agent's next turn. When the agent is ready, it pulls the highest-priority unprocessed batch.
 
 ### → Spawn
-A routing rule matches and specifies a `spawn` action. Koshi creates a task record and spawns a sub-agent automatically. The main agent is **not notified** — no push summaries, no interruptions. The agent queries memory or tasks when it needs to know what happened.
+A routing rule matches and specifies a `spawn` action. Koshi creates a [task](./tasks.md) record and spawns a [sub-agent](./agents.md) automatically. The main agent is **not notified** — no push summaries, no interruptions. The agent queries [memory](./memory.md) or tasks when it needs to know what happened.
 
 ### → Drop
 No matching route and no default forward. The batch is logged but discarded. The `routed` flag is set to `TRUE` so it won't be reprocessed.
@@ -103,9 +103,7 @@ plugins:
 
 ## Persistence
 
-SQLite (`buffer.db`). Messages survive restarts — if Koshi goes down mid-processing, unrouted messages are waiting when it comes back. Messages received during restart (if channels have their own queues) are written to the buffer on reconnect.
-
-The buffer DB can be the same SQLite file as memory (`memory.db`) or a separate file. Default: separate `buffer.db` for operational isolation — the buffer is high-write, memory is high-read.
+SQLite (`data/koshi.db` — the single database file for all Koshi state). Messages survive restarts — if Koshi goes down mid-processing, unrouted messages are waiting when it comes back. Messages received during restart (if channels have their own queues) are written to the buffer on reconnect.
 
 ## Retention
 
@@ -140,8 +138,8 @@ Auto-triage behaviour (when buffer exceeds threshold) is TBD for v1. Current des
 The main agent is **not notified** about auto-routed work. When a routing rule spawns a sub-agent, the main agent's context is untouched — no push summaries, no "hey, I handled 3 PRs while you were idle" messages.
 
 If the main agent needs to know what happened, it queries:
-- **Memory** — sub-agent results are stored as memory entries
-- **Tasks** — task records show status, results, and history
+- **[Memory](./memory.md)** — sub-agent results are stored as memory entries
+- **[Tasks](./tasks.md)** — task records show status, results, and history
 
 This keeps the main agent's context clean and focused on the current conversation. Background work is discoverable, not pushed.
 

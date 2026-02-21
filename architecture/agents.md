@@ -1,285 +1,410 @@
-# Agent Architecture
+# Specialist Agent Execution Model
+
+> **Status: Decided, Not Yet Built.** Design document from brainstorming sessions on 2026-02-21. Supersedes the previous agent architecture doc.
 
 ## Core Principle
 
-The main thread is the UI thread. It never blocks.
+**Agent = Worker + Skill + Tool Scope.**
 
-Same pattern as web workers in browser development — heavy work goes to background agents so the main thread stays responsive and context-rich.
+A sub-agent is not a generic Claude conversation with a task string. It is a specialist — defined by a skill, scoped to a tool set, producing a durable result. The coordinator never acts directly; it thinks, decides, and delegates.
 
-## Anthropic as a Service Plugin
+## Three Roles, Clean Separation
 
-Claude is not inside Koshi — it's an external service accessed via the `@koshi/anthropic` service plugin. This plugin:
+| Role | Responsibility |
+|------|---------------|
+| **Planning agent** | Writes work orders. Decomposes a job into tasks with scoped context for each. |
+| **Coordinator** | Dispatches work orders. Reads summaries and IDs, spawns agents, reacts to completions. |
+| **Specialists** | Execute work orders. Each gets only its task context, its skill, and its scoped tools. |
 
-- Registers tools: `claude_conversation`, `spawn_agent`
-- Maintains the main agent session as a persistent connection to the Anthropic API
-- Spawns sub-agents as separate API conversations
-- Is structurally the same as any other service plugin (GitHub, web search, TTS) — just the one that thinks
+## Coordinator (Main Thread)
 
-The main agent session is a long-lived conversation with context. Sub-agents are ephemeral — spawned, do work, return result, die.
+The coordinator is the user's conversation partner. It never executes work. Its only job is to think, decide, and delegate.
 
-## Main Thread
+**What the coordinator sees:**
 
-The user's conversation partner. Optimised for context, not execution.
+- The [skill index](./system-prompt.md#4-available-skills): name + one-line description for every skill. That is all. Full skill content is never loaded into the coordinator's context.
+- [Memory](./memory.md) tools for recall and curation.
+- The agent results table for reading completed work.
+- The [task dependency graph](./tasks.md#dependencies) for scheduling.
 
-The main agent receives messages as **batched arrays** — never individual messages. The buffer collects messages in a configurable window (default 500ms), groups by conversation/source, and delivers the highest-priority batch when the agent is ready for its next turn. Even a single message arrives as a one-element array. This means the agent always processes `Message[]`, keeping the interface consistent.
+**What the coordinator does NOT do:**
 
-**Auto-routed work does not notify the main agent.** When routing rules spawn sub-agents automatically (e.g. for GitHub webhooks), the main agent's context is untouched — no push summaries, no interruptions. If the agent needs to know what happened, it queries memory or tasks. Context stays clean.
+- Execute Claude Code tools like Read, Bash, Grep, etc. These are behaviorally forbidden via the [system prompt](./system-prompt.md#2-architecture--tool-rules) (in the Claude Code/MCP bridge they cannot be structurally removed). Note: `read_file` (an MCP tool for reading agent output files) IS permitted — it is distinct from `Read` (a Claude Code file reading tool).
+- Load full skill content. It only sees the index.
+- Plan complex jobs directly. For multi-step work, it spawns a planning agent. Planning is delegated work, not coordinator work — planning blocks the thread the same way execution does.
+- Load full research or full plans into its own context. It reads summaries and passes pointers.
 
-**Tools available:**
-- `spawn_agent` — create a background worker
-- `memory_query` — recall relevant context
-- `memory_store` — save new context
+**Coordinator workflow:**
 
-**No other tools.** No exec, no file I/O, no web fetching. This is structural, not instructional — the main thread literally cannot run shell commands.
+1. **Receive** — a user message arrives, or a sub-agent completion wakes the coordinator from idle.
+2. **Delegate research** — for jobs requiring investigation, spawn a research agent. Its result is stored in the DB.
+3. **Delegate planning** — spawn a planning agent, passing a pointer to the research result (not the research itself). The planning agent reads the full research, produces tasks with scoped context for each.
+4. **Schedule** — examine the dependency graph, find tasks with no blockers, spawn agents for them in parallel.
+5. **React** — when a sub-agent completes, mark the task done, check what is now unblocked, spawn the next batch.
+6. **Curate** — read agent results, store important findings as [memories](./memory.md) (linked to the task and result), update the [narrative](./narrative.md).
+7. **Respond** — inform the user of progress or final results.
 
-**Why:**
-- Maximum context window for conversation
-- Never blocked by a 10-minute build
-- No tool call results cluttering the history
-- Stays responsive to the user at all times
+## Context Narrows Down the Tree
 
-## Sub-Agents
+Context gets more focused at each level of delegation. This is by design — no agent loads more information than it needs.
 
-Background workers. Spawned by the main thread OR by routing rules. Run independently, report back.
+| Agent | What it sees |
+|-------|-------------|
+| **Research agent** | Full raw information — files, web results, codebase content |
+| **Planning agent** | Full research output — reads the complete research result to decompose it |
+| **Specialists** | Only their slice — the curated brief from the planning agent for their specific task |
+| **Coordinator** | Only summaries and IDs — never loads full research, full plans, or specialist contexts |
 
-**Tools available:** configured per-spawn, from the full plugin set
-```ts
-spawn_agent({
-  task: "Fix lint errors in src/api/webhook.ts and commit",
-  tools: ["exec", "files"],
-  timeout: 300
-})
+The coordinator passes **pointers, not payloads**. When it spawns the planning agent, it passes `context: [agent_result:12]` — a reference to the research result. The spawn infrastructure resolves the pointer and injects the content. The coordinator's own context window never holds the research.
+
+## Planning Agent as Context Compiler
+
+The planning agent's job is not just to split work into tasks. It **curates scoped context** for each task.
+
+When the planning agent receives a research result, it:
+
+1. Reads the full research.
+2. Decomposes the job into discrete tasks.
+3. For each task, writes a **curated brief** — the subset of the research that task needs, plus any additional framing or instructions. This is the task's `context` field.
+4. Assigns a skill to each task.
+5. Defines dependency relationships between tasks.
+6. Writes the task rows to the DB.
+
+The planning agent's skill should define this as part of its output contract: each task must include a title, a context brief, a skill assignment, and dependency declarations.
+
+**The context brief is the planning agent's core deliverable.** A task with a vague context like "implement the auth module" is a failure of planning. A good brief includes the relevant research findings, the specific requirements, the interfaces to conform to, and the constraints that apply — scoped to exactly what this specialist needs.
+
+## Context Lives in the Tasks Table
+
+Context flows through the database, not through the coordinator's context window.
+
+1. The planning agent writes task rows to the `tasks` table, each with a `context` field containing the curated brief.
+2. The coordinator spawns agents by task ID: `spawn_agent(task_id: 5)`.
+3. The spawn infrastructure reads the task row, pulls the context, loads the skill, builds the prompt.
+4. The specialist runs with its scoped context. It never sees the full research or other tasks' contexts.
+
+**The coordinator never touches task context.** It reads task titles, statuses, and dependency edges. The actual content — what each specialist needs to know — passes from the planning agent through the DB to the specialist, bypassing the coordinator entirely.
+
+## Tasks Table Schema
+
+```sql
+CREATE TABLE IF NOT EXISTS tasks (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  project_id TEXT NOT NULL,           -- groups tasks into a job
+  title TEXT NOT NULL,                -- short description
+  context TEXT,                       -- planning agent's curated brief for this task
+  skill TEXT NOT NULL,                -- which specialist to use
+  depends_on TEXT NOT NULL DEFAULT '[]',  -- JSON array of task IDs
+  status TEXT NOT NULL DEFAULT 'pending', -- pending | blocked | running | completed | failed
+  agent_result_id INTEGER REFERENCES agent_results(id),  -- filled when agent completes
+  created_at TEXT NOT NULL DEFAULT (datetime('now'))
+);
 ```
 
-**Lifecycle:**
-1. Spawn triggered — either by main thread calling `spawn_agent`, or by a routing rule match
-2. Koshi creates a new Claude API conversation via the Anthropic service plugin
-3. System prompt: task description + relevant memories (queried from DB)
-4. Agent works — uses tools, makes API calls, runs commands
-5. Agent completes → result returned to main thread (or stored directly if rule-spawned)
-6. Work summary stored as a memory entry
-7. Agent conversation discarded (ephemeral)
+## Cross-Agent Context Sharing
 
-**Properties:**
-- Ephemeral — no persistent session, no history to manage
-- Isolated — own conversation, own tool calls, can't interfere with main thread
-- Concurrent — multiple agents can run in parallel
-- Timeout-bound — always has a deadline, can't run forever
-- Fire-and-forget — main thread doesn't wait, gets notified on completion
+Sub-agents can reference other agents' outputs without the coordinator loading those outputs.
 
-## Communication
+**Mechanism:** The `context` parameter in a spawn call can include `[agent_result:ID]` references. The spawn infrastructure resolves these — loads the referenced agent result from the DB and injects it into the sub-agent's prompt.
 
-### Main thread → sub-agent (explicit spawn)
+**Example:** After a research agent completes (result ID 12), the coordinator spawns the planning agent:
 
 ```
-Main Thread                    Sub-Agent
-    │                              │
-    ├── spawn_agent(task) ────────►│
-    │                              ├── works...
-    │   (keeps talking to user)    ├── uses tools...
-    │                              ├── works...
-    │◄── result notification ──────┤
-    │                              ╳ (dies)
-    ▼
-Stores result as memory
+spawn_agent(
+  task: "Plan implementation based on research",
+  skill: "project-planner",
+  context: [agent_result:12]
+)
 ```
 
-### Routing rules → sub-agent (automatic spawn)
+The coordinator passes a pointer. The spawn infrastructure loads result 12 and gives the planning agent the full research text. The coordinator's context window never holds the research.
+
+For planned tasks, this is handled automatically — the task row's `context` field already contains the curated brief from the planning agent.
+
+## Spawn Signature
+
+Two modes, depending on whether the task comes from a plan or is ad-hoc:
+
+**Planned tasks** — everything needed is in the task row:
 
 ```
-Incoming Message                Router                     Sub-Agent
-    │                              │                          │
-    ├── GitHub PR webhook ────────►│                          │
-    │                              ├── matches route rule     │
-    │                              ├── spawn_agent(task) ────►│
-    │                              │                          ├── reviews PR...
-    │                              │                          ├── posts comments...
-    │                              │◄── result ───────────────┤
-    │                              │                          ╳ (dies)
-    │                              ├── creates task record
-    │                              ├── stores memory
-    │                              │
-    (main agent never involved)
+spawn_agent(task_id: 5)
 ```
 
-No bidirectional communication. The agent gets a task, does it, returns a result. If the task is unclear, the agent does its best — it can't ask the main thread for clarification. Task descriptions need to be complete.
+The spawn infrastructure reads the task row, extracts `context`, `skill`, and any other metadata. One argument, no ambiguity.
 
-## Model Selection
+**Ad-hoc tasks** — coordinator specifies directly:
 
-Models are defined once as named entries in `koshi.yaml` and referenced by name everywhere — no hardcoded model strings:
+```
+spawn_agent(
+  task: string,       // what to do
+  skill: string,      // which specialist
+  context?: string,   // optional; may include [agent_result:ID] references
+  model?: string,     // optional; overrides the skill's model: field. Normally omitted.
+)
+```
+
+When `spawn_agent` is called:
+
+1. The spawn system resolves the task — either by reading the task row (planned) or using the provided arguments (ad-hoc).
+2. It loads the full skill by name.
+3. It reads the `tools` array and `model` from the skill's frontmatter (model defaults to `agent.model` if not specified in the skill; an explicit `model` on the spawn call overrides both).
+4. It resolves any `[agent_result:ID]` references in the context, loading the referenced results from the DB.
+5. It builds the sub-agent's prompt with the skill content, the task context, and worker rules.
+6. It creates a new Claude API conversation with only those tools registered, using the resolved model.
+7. The agent runs, completes, and its output is written to the `agent_results` table.
+
+No `tools` parameter on the spawn call. The skill is the single source of truth for what the agent can do.
+
+## Skill-Defined Tool Scope
+
+The skill defines the permitted tools. Period. No coordinator override.
+
+This is structural enforcement: if a tool is not listed in the skill's frontmatter, the sub-agent literally cannot call it. The tool is not registered in the agent's session. There is no "forbidden tools" instruction to ignore — the tool does not exist.
+
+**Why not coordinator-narrowed scope?** A ceiling model (skill defines the max, coordinator narrows per-spawn) was considered and rejected. It introduces judgment calls at spawn time — which tools should the coordinator strip for this particular task? That is unnecessary complexity. If a task needs a different tool set, write a new skill. Skills are cheap.
+
+**Skill frontmatter:**
 
 ```yaml
-models:
-  main:
-    plugin: "@koshi/anthropic"
-    model: claude-sonnet-4-20250514
-    apiKey: ${ANTHROPIC_API_KEY}
-  opus:
-    plugin: "@koshi/anthropic"
-    model: claude-opus-4-20250514
-    apiKey: ${ANTHROPIC_API_KEY}
-  local:
-    plugin: "@koshi/ollama"
-    model: qwen-coder-32b
-    endpoint: http://localhost:11434
-
-agent:
-  model: main                   # main thread uses this named model
+---
+name: code-review
+description: Review code changes for correctness, style, and potential issues
+triggers:
+  - review
+  - code review
+  - PR review
+tools:
+  - Read
+  - Grep
+  - Glob
+  - Bash
+model: opus
+---
 ```
 
-The main agent's model is set via `agent.model`. Templates and explicit spawns reference models by name. Change the definition once, it ripples everywhere.
+Required fields:
 
-Complex tasks can override with a different named model:
+| Field | Type | Description |
+|-------|------|-------------|
+| `name` | `string` | Kebab-case identifier |
+| `description` | `string` | One sentence — this is what the coordinator sees in the skill index |
+| `triggers` | `string[]` | Keywords/phrases that suggest this skill |
+| `tools` | `string[]` | Permitted tools for the sub-agent. This is the entire tool set. |
 
-```ts
-spawn_agent({
-  task: "Architect the payment refund system",
-  model: "opus",               // references the named model, not a raw model string
-  tools: ["files", "web"]
-})
+Optional fields:
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `model` | `string` | Named model to use (references `models:` in `koshi.yaml`). If omitted, defaults to `agent.model` (the main model). Model selection lives in the skill, not on the spawn call. |
+
+The body of the skill markdown file contains the full instructions — domain knowledge, workflow steps, examples. This content is loaded only into the sub-agent's prompt, never the coordinator's.
+
+**Creating a new specialist is writing a markdown file.** No code, no deployment, no restart. The skill registry picks it up immediately. The coordinator sees it in the index on its next turn.
+
+## The Full Workflow
+
+A concrete example of how a complex project flows through the system:
+
+1. **User provides complex project** — e.g., "Refactor the authentication system to support OAuth."
+2. **Coordinator spawns research agent** — the research agent investigates the codebase, reads files, gathers raw information. Its output (result ID 12) is written to `agent_results`.
+3. **Coordinator reads the executive summary** from result 12 (just enough to know the research succeeded), then spawns the planning agent with `context: [agent_result:12]`.
+4. **Planning agent sees the full research.** It decomposes the job into tasks, writing a curated context brief for each. Tasks are written to the `tasks` table.
+5. **Coordinator checks the dependency graph.** It finds tasks with no blockers and spawns specialists for each, using `spawn_agent(task_id: N)`.
+6. **Each specialist gets only its task context** — the curated brief from the planning agent, the skill instructions, and the scoped tools. It never sees the full research, other tasks' contexts, or the overall plan.
+7. **As specialists complete,** the coordinator marks tasks done, checks what is now unblocked, and spawns the next batch.
+8. **The coordinator never loads** the full research or the full plan into its own context. It works with summaries, task titles, statuses, and IDs.
+
+## Sub-Agent Prompt
+
+### The Current Bug
+
+Sub-agents currently receive the same system prompt as the coordinator. This includes coordinator-specific instructions like "delegate to spawn_agent" and the forbidden tools list — which directly contradicts the sub-agent's role as a worker that should be using those tools.
+
+### The Fix
+
+An `agentType` parameter in the [prompt builder](./system-prompt.md). Two modes:
+
+- **`coordinator`** — the current prompt: identity, architecture rules, skill index, delegation instructions, forbidden tools.
+- **`worker`** — a stripped prompt: identity, the task description, the skill content, and worker rules.
+
+Worker rules are simple:
+
+- You are a specialist. Do the task. Return the result.
+- You cannot spawn other agents.
+- You cannot write to memory.
+- When you are done, your output is your deliverable.
+
+Workers skip the coordinator section entirely. No delegation instructions, no forbidden tools list, no skill index.
+
+## No Memory Pollution
+
+Sub-agents do NOT have access to `memory_store`, `memory_update`, `memory_reinforce`, or `memory_demote` (see [memory tools](./memory.md#tool-interface)). These tools are not registered in worker sessions. This is structural — the tools do not exist in the sub-agent's environment.
+
+This solves the "noisy sub-agent memories" problem by design, not discipline. Sub-agents cannot create low-quality memories because they cannot create memories at all.
+
+Sub-agent output flows through the spawn infrastructure. The coordinator reads the result and curates what is worth keeping — storing key findings as memories with full provenance (linked to the task and the agent result that produced them).
+
+Sub-agents can still read memory via `memory_query` if the skill's tool list includes it. Reading is safe; writing is the problem.
+
+## Agent Results & Durability
+
+### The `agent_results` Table
+
+```sql
+CREATE TABLE IF NOT EXISTS agent_results (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  task_id INTEGER REFERENCES tasks(id),    -- nullable; not all agents are part of a task plan
+  skill_used TEXT NOT NULL,                 -- which skill was loaded
+  output TEXT NOT NULL,                     -- the agent's response text (the deliverable)
+  created_at TEXT NOT NULL DEFAULT (datetime('now')),
+  processed INTEGER NOT NULL DEFAULT 0,    -- whether the coordinator has read and curated this
+  memory_ids TEXT NOT NULL DEFAULT '[]'    -- JSON array of memory IDs the coordinator created from this
+);
 ```
+
+**Durability guarantee:** When a sub-agent completes, its output is written to this table immediately — before any notification is sent. The data survives even if the coordinator never wakes up, the session drops, or the process restarts.
+
+### Wake-Up Mechanism
+
+When a sub-agent completes:
+
+1. Output is written to `agent_results`.
+2. A message is sent to the coordinator's [message queue](./buffer.md).
+3. The coordinator wakes from idle (event-driven, not polling).
+4. The coordinator reads the result, curates it, and checks for newly unblocked tasks.
+
+The coordinator is idle until a message arrives — either from the user or from agent completion. No polling loops. No busy-waiting.
+
+### Session Recovery
+
+On new session start, the coordinator checks for unprocessed results:
+
+```sql
+SELECT * FROM agent_results WHERE processed = 0;
+```
+
+Any unprocessed results get curated. Any incomplete task graphs get resumed. Nothing falls through the cracks because of a session boundary.
+
+## Task Dependency Graph
+
+For complex work, the coordinator delegates planning to a planning agent. The planning agent produces a set of tasks with dependency relationships, each carrying its own scoped context. The coordinator then schedules execution based on the dependency graph.
+
+### Relational Execution Graph
+
+```
+Narrative
+  |-- references --> Memory[]
+  |     |-- each Memory optionally --> narrative_id (back-link)
+  |     |-- each Memory optionally --> task_id (what task produced it)
+  |
+  |-- references --> Task[]
+  |     |-- depends_on --> Task[] (dependency edges)
+  |     |-- context: curated brief (from planning agent)
+  |     |-- skill: which specialist to use
+  |     |-- agent_result_id --> AgentResult (the output)
+  |     |-- status: pending | blocked | running | completed | failed
+  |
+  |-- previous_narrative_id (chain)
+```
+
+This graph connects to the narrative system described in [narrative.md](narrative.md). Every piece of data — memories, tasks, agent results, narratives — is linked. From any node, you can traverse to any other.
+
+### Scheduling
+
+The coordinator does not manually sequence tasks. It reads the graph:
+
+1. Find all tasks with status `pending` and no unresolved dependencies.
+2. Spawn agents for each one (in parallel, up to the concurrency limit) using `spawn_agent(task_id: N)`.
+3. Mark them `running`.
+4. When a result comes back, mark the task `completed`, write the result, check what is now unblocked.
+5. Repeat until the graph is fully resolved or a task fails.
+
+Failed tasks can block downstream work. The coordinator decides whether to retry, skip, or inform the user.
+
+### Full Provenance Chain
+
+From any single memory, you can reconstruct the full context:
+
+1. **Memory** has `task_id` -- follow to the task that produced it.
+2. **Task** has `agent_result_id` -- see the full agent output.
+3. **Task** is part of a dependency graph -- see the whole plan.
+4. **Memory** has `narrative_id` -- see the reasoning arc that motivated the plan.
+5. **Narrative** has `previous_narrative_id` -- walk backwards through the full reasoning history.
+
+Nothing is orphaned. Every fact knows what produced it.
 
 ## Concurrency
 
 Multiple agents can run simultaneously. Koshi manages:
-- Active agent count (configurable limit)
-- Queue if limit exceeded
-- Timeout enforcement
-- Result delivery
+
+- Active agent count (configurable limit).
+- Queue if limit exceeded (FIFO within priority).
+- Timeout enforcement per agent.
+- Result delivery to the durable results table.
 
 ```yaml
 agents:
-  maxConcurrent: 3        # max parallel agents
-  defaultTimeout: 300     # 5 minutes default
+  maxConcurrent: 3
+  defaultTimeout: 300     # 5 minutes
 ```
 
-## What This Replaces
+## Model Selection
 
-In OpenClaw:
-- `sessions_spawn` creates isolated sessions with full session management
-- Sessions persist, have history, need cleanup
-- Main session has ALL tools and delegates by convention (AGENTS.md instructions)
-- Sub-agents are heavyweight — separate sessions with their own lifecycle
+Models are defined as named entries in `koshi.yaml` and referenced by name. Model selection lives in the skill frontmatter via the `model:` field — this is the primary mechanism. If a skill does not specify a model, the default `agent.model` from `koshi.yaml` is used.
 
-In Koshi:
-- `spawn_agent` creates an ephemeral API call via the Anthropic service plugin
-- No session persistence — work is done, result stored as memory, conversation discarded
-- Main thread has NO execution tools — delegation is structural, not instructional
-- Sub-agents are lightweight — just another Claude API conversation with tools
-- Routing rules can spawn agents without main thread involvement — massive token savings
+The ad-hoc spawn signature accepts an optional `model` override, but this is intended only for exceptional cases where the coordinator needs to override the skill's default:
 
-## Decisions
-
-### No nested agents (v1)
-Sub-agents cannot spawn their own sub-agents. Flat hierarchy only. Anthropic does it this way for a reason — nested spawning could spiral exponentially. The main thread (or the router) is the only coordinator.
-
-### Streaming output
-Sub-agent output streams to the main thread in real time. The TUI can show it if the user wants visibility into background work — a side panel or collapsible section. Default: collapsed, expandable on demand. The main thread always sees results.
-
-### Agent Templates
-Pre-configured tool sets for common tasks. Users can define their own, and the main agent can create new ones at runtime.
-
-```yaml
-# koshi.yaml
-templates:
-  coder:
-    tools: [exec, files]
-    model: local                # uses the local Ollama model
-    timeout: 300
-  researcher:
-    tools: [web, files]
-    model: main                 # uses the main Sonnet model
-    timeout: 120
-  reviewer:
-    tools: [exec, files, web]
-    model: opus                 # uses the Opus model
-    timeout: 300
+```
+spawn_agent(
+  task: "Review the authentication refactor",
+  skill: "code-review",
+  model?: "opus"          // optional override; normally omitted — skill's model: field is preferred
+)
 ```
 
-Templates reference named models, not raw model strings. Change the model definition once in `models:`, every template using that name picks up the change.
+See [overview.md](overview.md) for the named model system.
 
-Usage:
-```ts
-spawn_agent({
-  template: "coder",
-  task: "Fix lint errors in src/api/webhook.ts"
-})
+## What Changed from the Previous Design
 
-// Or override template defaults with a different named model
-spawn_agent({
-  template: "coder",
-  task: "Complex refactor of payment module",
-  model: "opus",               // override to a more capable model
-  timeout: 600
-})
-```
+| Previous (POC) | New (Specialist Model) |
+|-----------------|------------------------|
+| Templates define tool sets (`tools: [exec, files]`) | Skills define tool sets in frontmatter |
+| Coordinator has forbidden tools list (behavioral); workers also behavioral | Coordinator: behavioral forbidden list (unchanged). Workers: structurally scoped tools (only skill tools registered) |
+| `spawn_agent(task, tools, template)` | `spawn_agent(task_id)` for planned; `spawn_agent(task, skill, context?)` for ad-hoc |
+| Sub-agents get coordinator prompt | Sub-agents get worker prompt via `agentType` |
+| Sub-agents can write memories | Sub-agents have no memory write access |
+| Results returned via notification only | Results written to durable `agent_results` table first |
+| Flat task list | Task dependency graph with parallel scheduling |
+| No session recovery for agent results | Unprocessed results curated on session start |
+| Templates are YAML config blocks | Skills are markdown files with frontmatter |
+| Context passed as task string | Context curated by planning agent, stored in task row, resolved by spawn infrastructure |
+| Coordinator loads full context | Coordinator passes pointers; context narrows down the delegation tree |
 
-The main agent can also create templates on the fly — if it notices a recurring task pattern, it saves a new template to config. User templates and agent-created templates live in the same config, both editable.
+Templates are removed. Skills replace them entirely. A skill is both the instructions and the tool scope — there is no separate "tool config" concept.
 
-Similarly, the main agent can write new routing rules — it becomes an architect that builds automation rather than a worker that handles everything.
+## Design Principles
 
-## Cost Tracking
+1. **Structural over behavioral.** Tool restrictions are enforced by not providing the tools, not by asking nicely. There is no forbidden tools list to ignore — the tool does not exist.
 
-Every agent run tracks token usage:
+2. **Skills are the registry.** Creating a new specialist is writing a markdown file. No code, no deployment, no restart.
 
-```sql
-CREATE TABLE token_usage (
-  id INTEGER PRIMARY KEY,
-  agent_run_id TEXT,              -- NULL for main thread turns
-  session_id TEXT,
-  input_tokens INTEGER,
-  output_tokens INTEGER,
-  model TEXT,
-  cost_usd REAL,                  -- estimated from token counts × model pricing
-  created_at DATETIME DEFAULT CURRENT_TIMESTAMP
-);
-```
+3. **Coordinator never acts.** It thinks, decides, delegates. Even planning is delegated.
 
-Koshi records usage after each Claude API response. Cost is estimated from published per-token pricing (hardcoded per model, updated with releases).
+4. **Context narrows down the tree.** Research agents load full raw info. Planning agents load full research. Specialists load only their slice. The coordinator loads only summaries and IDs.
 
-CLI:
-```bash
-koshi usage                     # today's totals
-koshi usage --period 7d         # last 7 days
-koshi usage --by-model          # breakdown by model
-koshi usage --by-template       # breakdown by agent template
-```
+5. **Context flows through the DB, not the coordinator.** The planning agent writes curated briefs to task rows. The spawn infrastructure reads them. The coordinator passes pointers, never payloads.
 
-This is just accounting — no enforcement or limits in v1. But having the data means you can spot expensive patterns and adjust.
+6. **Results are durable.** Agent output hits the database before any notification. Nothing is lost on session drop, process restart, or coordinator timeout.
 
-## Tool Sandboxing
+7. **Event-driven.** The coordinator is idle until a message (user or agent completion) arrives. No polling, no blocking.
 
-Sub-agents have restricted access to tools. The boundaries:
+8. **Full provenance.** Every piece of data knows what produced it and can be traced back through the execution graph to the original reasoning that motivated it.
 
-### `exec` tool
-- Working directory is locked to the project workspace (where `koshi.yaml` lives)
-- Cannot `cd` above the workspace root
-- Configurable command allowlist/denylist per template:
-  ```yaml
-  templates:
-    coder:
-      tools: [exec, files]
-      exec:
-        allowlist: ["git", "pnpm", "npm", "node", "tsc", "eslint"]
-  ```
-- No `sudo` by default — must be explicitly allowed
-- Timeout applies to individual commands, not just the agent run
+9. **No memory pollution.** Sub-agents cannot write to the memory database. The coordinator curates what is worth keeping.
 
-### `files` tool
-- Read/write restricted to workspace directory and below
-- No access to `~/.koshi/`, config files, or system paths
-- Symlinks that escape the workspace are rejected
-- Configurable additional paths:
-  ```yaml
-  templates:
-    researcher:
-      tools: [files, web]
-      files:
-        extraPaths: ["/home/user/shared/data"]
-  ```
+10. **Role separation is absolute.** The planning agent writes the work orders. The coordinator dispatches them. The specialists execute them. Each role handles only what it is qualified for — no role reaches into another's responsibility.
 
-### General principles
-- Sub-agents cannot modify `koshi.yaml` or any runtime config (only the main agent can write routing rules/templates)
-- Sub-agents cannot spawn other agents (no nested spawning, v1)
-- All tool calls are logged with the agent run ID for audit
-- The main thread is the only trust boundary — it decides what tools each agent gets
+---
+
+> **Note:** This design needs a final evaluation pass for problems before implementation begins. The concepts are internally consistent as documented, but a deliberate review for edge cases, failure modes, and missing interactions should happen before any code is written.

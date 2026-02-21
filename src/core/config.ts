@@ -83,6 +83,8 @@ export function loadConfig(path?: string): KoshiConfig {
     },
     memory: {
       backend: doc.memory?.backend ?? 'sqlite',
+      reinforceWeight: doc.memory?.reinforceWeight ?? 3,
+      demoteWeight: doc.memory?.demoteWeight ?? 1,
       maxSize: doc.memory?.maxSize ?? '100MB',
       pruneSchedule: doc.memory?.pruneSchedule ?? '0 4 * * *',
       prunePercent: doc.memory?.prunePercent ?? 1,

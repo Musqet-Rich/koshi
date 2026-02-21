@@ -6,13 +6,13 @@ Koshi is a single Node.js process running as a daemon. There is no separate "dae
 
 It:
 
-1. **Loads config** — reads `koshi.yaml`, validates, resolves plugin references
+1. **Loads config** — reads [`koshi.yaml`](./overview.md#config-koshiyaml), validates, resolves plugin references
 2. **Initialises Fastify** — the HTTP/WebSocket server that plugins register on
 3. **Loads plugins** — each plugin's `init(koshi, config)` runs, registering channels/services/listeners via Fastify's `fastify.register()` pattern
 4. **Starts listening** — channels connect, listeners bind routes, services initialise
-5. **Routes messages** — incoming messages hit the router, matched against YAML rules or forwarded to the main agent
-6. **Manages the message buffer** — persistent queue of incoming messages with provenance
-7. **Batches and routes messages** — the buffer collects incoming messages, groups them by conversation/source in a configurable window (default 500ms), and the router dispatches batches to the main agent, spawned sub-agents, or drops them per routing rules
+5. **Routes messages** — incoming messages hit the router, matched against [YAML rules](./overview.md#routing-rules) or forwarded to the main agent
+6. **Manages the [message buffer](./buffer.md)** — persistent queue of incoming messages with provenance
+7. **Batches and routes messages** — the buffer collects incoming messages, groups them by conversation/source in a configurable window (default 500ms), and the router dispatches batches to the main agent, spawned [sub-agents](./agents.md), or drops them per routing rules
 8. **Runs cron** — scheduled tasks fire at their times
 8. **Serves IPC** — local Unix socket for TUI and CLI
 
@@ -25,7 +25,7 @@ Fastify is the backbone. Its plugin system maps directly onto Koshi's needs:
 - **Graceful shutdown** — `fastify.close()` tears down all plugins in reverse order
 - **HTTP routing** — listener plugins register routes directly on the Fastify instance
 - **WebSocket support** — via `@fastify/websocket` for channels that need it
-- **Decorators** — Koshi decorates the Fastify instance with `koshi.router`, `koshi.memory`, `koshi.buffer` etc.
+- **Decorators** — Koshi decorates the Fastify instance with `koshi.router`, `koshi.memory` ([memory system](./memory.md)), `koshi.buffer` ([message buffer](./buffer.md)) etc.
 
 ```ts
 const fastify = Fastify({ logger: true })
@@ -56,10 +56,7 @@ Load koshi.yaml, validate config
 Create Fastify instance
     │
     ▼
-Init memory DB (SQLite, open or create)
-    │
-    ▼
-Init persistent message buffer
+Init SQLite DB (data/koshi.db — memory, tasks, sessions, buffer)
     │
     ▼
 Load & register plugins (fastify.register for each)
@@ -134,7 +131,7 @@ Single Node.js process. No cluster, no workers. Reasons:
 - Simpler to reason about, debug, and log
 - Channels are async I/O, not CPU-bound
 
-Parallel sub-agents are separate Claude API calls within the same process — concurrent promises.
+Parallel [sub-agents](./agents.md) are separate Claude API calls within the same process — concurrent promises.
 
 ## State Directory
 
@@ -152,9 +149,7 @@ Project data lives wherever `koshi.yaml` points:
 
 ```
 ./data/
-├── memory.db           # SQLite memory store
-├── buffer.db           # Persistent message buffer
-├── sessions/           # conversation history
+├── koshi.db            # SQLite — memory, tasks, sessions, buffer (one DB)
 └── blobs/              # attachments, audio, etc.
 ```
 
@@ -209,8 +204,7 @@ koshi backup -o ./my-backup.tar.gz  # custom output path
 ```
 
 Produces a `.tar.gz` containing:
-- `memory.db` — full SQLite database (memory, tasks, sessions)
-- `buffer.db` — message buffer
+- `koshi.db` — full SQLite database (memory, tasks, sessions, buffer — one DB)
 - `koshi.yaml` — current config
 - `blobs/` — attachments directory
 

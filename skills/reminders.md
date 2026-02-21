@@ -2,6 +2,7 @@
 name: reminders
 description: Set reminders and scheduled notifications for the user
 triggers: [remind, reminder, notify, notification, alert, schedule, meeting, before, "in X minutes", pm, am, timer, cron]
+tools: [schedule_job, cancel_job, list_jobs]
 ---
 
 ## How to handle reminders

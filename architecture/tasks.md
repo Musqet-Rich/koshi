@@ -2,27 +2,23 @@
 
 ## Design
 
-Tasks are built into core. No external dependencies. Tasks are created by the main thread, by routing rules, or by cron — then agents are spawned to work them.
+Tasks are built into core. No external dependencies. Tasks are created by the planning agent, by [routing rules](./overview.md#routing-rules), or by cron — then [agents](./agents.md) are spawned to work them.
 
 A task is the durable record. An agent is a transient run against it.
 
 ## Schema
 
 ```sql
-CREATE TABLE tasks (
-  id INTEGER PRIMARY KEY,
-  title TEXT NOT NULL,
-  description TEXT,
-  status TEXT DEFAULT 'open',      -- open, in_progress, done, failed
-  priority TEXT DEFAULT 'normal',  -- low, normal, high, critical
-  template TEXT,                   -- agent template to use (coder, researcher, etc.)
-  source TEXT,                     -- who created it: 'agent', 'route', 'cron', 'cli'
-  route_match TEXT,                -- if created by routing rule, the rule that matched
-  agent_run_id TEXT,              -- UUID of current/last agent run
-  created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
-  started_at DATETIME,
-  completed_at DATETIME,
-  result TEXT                      -- what the agent produced
+CREATE TABLE IF NOT EXISTS tasks (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  project_id TEXT NOT NULL,           -- groups tasks into a job
+  title TEXT NOT NULL,                -- short description
+  context TEXT,                       -- planning agent's curated brief for this task
+  skill TEXT NOT NULL,                -- which specialist to use
+  depends_on TEXT NOT NULL DEFAULT '[]',  -- JSON array of task IDs
+  status TEXT NOT NULL DEFAULT 'pending', -- pending | blocked | running | completed | failed
+  agent_result_id INTEGER REFERENCES agent_results(id),  -- filled when agent completes
+  created_at TEXT NOT NULL DEFAULT (datetime('now'))
 );
 ```
 
@@ -31,20 +27,20 @@ CREATE TABLE tasks (
 ### Agent-created task
 
 ```
-task_create("Fix lint errors", template: "coder", priority: "high")
+spawn_agent(task_id: 5)
     │
     ▼
-Status: open
+Status: pending
     │
-    ▼ (main thread spawns agent)
-Status: in_progress, agent_run_id: <uuid>, started_at: now
+    ▼ (coordinator dispatches)
+Status: running
     │
-    ├── Agent succeeds → status: done, result: "Fixed 12 errors, committed abc123"
+    ├── Agent succeeds → status: completed, agent_result_id → agent_results row
     │
     └── Agent fails/times out → status: failed
             │
-            ▼ (main thread can retry)
-        New agent_run_id, status: in_progress again
+            ▼ (coordinator can retry)
+        New agent run, status: running again
 ```
 
 ### Route-created task
@@ -53,20 +49,20 @@ Status: in_progress, agent_run_id: <uuid>, started_at: now
 Incoming message matches routing rule
     │
     ▼
-Router auto-creates task (source: 'route', route_match: 'pr-review')
+Router auto-creates task (skill from rule, context from message)
     │
     ▼
 Router auto-spawns agent (if rule specifies autoRun)
     │
     ▼
-Status: in_progress — main agent never involved
+Status: running — coordinator never involved
     │
-    ├── Agent succeeds → status: done, result stored as memory
+    ├── Agent succeeds → status: completed, result in agent_results
     │
-    └── Agent fails → status: failed, main agent notified
+    └── Agent fails → status: failed, coordinator notified
 ```
 
-Routing rules in `koshi.yaml`:
+[Routing rules](./overview.md#routing-rules) in `koshi.yaml`:
 ```yaml
 routes:
   - match:
@@ -75,56 +71,45 @@ routes:
       action: opened
     action:
       spawn:
-        template: reviewer
+        skill: code-review
         task: "Review PR #{{number}}: {{title}}"
         autoRun: true
 ```
 
-This means the router is a task creator alongside the main agent and cron. The main agent can write new routing rules, effectively building automation pipelines without being in the loop for every event.
+This means the [router](./buffer.md#routing) is a task creator alongside the coordinator and cron. The coordinator can write new routing rules, effectively building automation pipelines without being in the loop for every event.
 
-## Main Thread Tools
+## Coordinator Tools
 
 ```ts
-task_create({
-  title: "Fix lint errors in webhook.ts",
-  description: "Run pnpm lint, fix all errors, commit",
-  template: "coder",
-  priority: "high"
-})
-
 task_list({
-  status: "open",           // filter by status
-  priority: "high"          // filter by priority
+  status: "pending",           // filter by status
+  project_id: "api-refactor"   // filter by project
 })
 
 task_update({
-  id: 1,
-  status: "done",
-  result: "Fixed and committed"
+  id: 5,
+  status: "completed"
 })
 ```
+
+Note: Task creation is normally done by the planning agent (which writes task rows with `context`, `skill`, `depends_on`). The coordinator dispatches tasks by ID via `spawn_agent(task_id: N)`. See [agents.md](./agents.md#planning-agent-as-context-compiler) for the planning workflow.
 
 ## Auto-execution
 
 When a task is created (by any source), it can be:
 
 1. **Execute immediately** — spawn an agent right away (`autoRun: true`)
-2. **Queue for later** — leave it open, pick up on next cron/heartbeat cycle
+2. **Queue for later** — leave it pending, pick up on next cron/heartbeat cycle
 3. **Manual** — wait for the user to say "work on task #3"
 
 ```ts
-// Create and execute immediately
-task_create({
-  title: "Review PR #1061",
-  template: "reviewer",
-  autoRun: true
-})
+// Planned task — dispatched by coordinator from the dependency graph
+spawn_agent(task_id: 5)   // reads context, skill, etc. from the task row
 
-// Create and queue
-task_create({
-  title: "Upgrade dependencies",
-  template: "coder",
-  priority: "low"
+// Ad-hoc task — coordinator spawns directly
+spawn_agent({
+  task: "Review PR #1061",
+  skill: "code-review"
 })
 ```
 
@@ -138,16 +123,17 @@ cron:
     schedule: "30 7 * * *"
     task:
       title: "Publish morning briefing"
-      template: "researcher"
+      skill: "morning-briefing"
       autoRun: true
 ```
 
-## Relationship to Memory
+## Relationship to [Memory](./memory.md)
 
-When a task completes, the result is automatically stored as a memory:
+When a task completes, the coordinator curates the result — storing key findings as [memories](./memory.md) with full provenance:
 - Content: task title + result summary
-- Source: "task"
-- Tags: extracted from title + description
+- Source: `agent` (see [narrative.md](./narrative.md#provenance-tags-full-set) for the full tag taxonomy)
+- Tags: extracted from title + context
+- task_id: links back to the originating task
 
 This means completed work is searchable in memory. "What did I do about lint errors?" → finds the task result.
 
@@ -165,58 +151,44 @@ One system instead of five.
 
 ## Dependencies
 
-Tasks can depend on other tasks. A task is only ready to run when all its dependencies are done.
+Tasks can depend on other tasks. A task is only ready to run when all its dependencies are completed.
 
 ```sql
--- Array stored as JSON
-blocked_by TEXT DEFAULT '[]'    -- e.g. '[1, 3, 7]'
+-- JSON array of task IDs this task depends on
+depends_on TEXT NOT NULL DEFAULT '[]'    -- e.g. '[1, 3, 7]'
 ```
 
-This enables wave execution — the main thread queries for unblocked tasks and runs them in parallel:
+This enables wave execution — the coordinator queries for unblocked tasks and runs them in parallel:
 
 ```sql
 SELECT * FROM tasks
-WHERE status = 'open'
+WHERE status = 'pending'
 AND NOT EXISTS (
   SELECT 1 FROM tasks AS dep
-  WHERE dep.id IN (SELECT value FROM json_each(tasks.blocked_by))
-  AND dep.status != 'done'
-)
-ORDER BY priority DESC;
+  WHERE dep.id IN (SELECT value FROM json_each(tasks.depends_on))
+  AND dep.status != 'completed'
+);
 ```
 
 Wave 1: tasks with no deps → Wave 2: tasks whose deps completed in wave 1 → etc.
 
 ## Projects / Epics
 
-Tasks can be grouped under a project for bigger plans:
+Tasks are grouped under a project for bigger plans:
 
 ```sql
-project TEXT                    -- optional grouping key e.g. "api-integration"
+project_id TEXT NOT NULL        -- groups tasks into a job, e.g. "api-integration"
 ```
 
-Find all tasks in a project: `task_list({ project: "api-integration" })`
+Find all tasks in a project: `task_list({ project_id: "api-integration" })`
 
-This replaces plan files — the project is just a label, the tasks ARE the plan. The main thread can create a whole project's worth of tasks with dependencies in one go.
+This replaces plan files — the project is just a label, the tasks ARE the plan. The planning agent creates a whole project's worth of tasks with dependencies in one go.
 
 ## Run History
 
 Every agent run is logged, not just the last:
 
-```sql
-CREATE TABLE task_runs (
-  id INTEGER PRIMARY KEY,
-  task_id INTEGER REFERENCES tasks(id),
-  agent_run_id TEXT NOT NULL,     -- UUID
-  template TEXT,
-  model TEXT,
-  status TEXT,                    -- completed, failed, timed_out
-  started_at DATETIME,
-  finished_at DATETIME,
-  result TEXT,
-  error TEXT                      -- if failed
-);
-```
+Run history is captured in the [`agent_results`](./agents.md#agent-results--durability) table. Each completed agent writes its output there, linked back to the task via `task_id`. The coordinator can see the full history of attempts for any task.
 
 A task might take 3 attempts before it succeeds. The history shows why — what failed, what changed, what worked.
 
@@ -225,16 +197,15 @@ A task might take 3 attempts before it succeeds. The history shows why — what 
 Tasks are manageable from the command line:
 
 ```bash
-koshi task add "Upgrade dependencies" --priority low --template coder
-koshi task list                        # all open tasks
-koshi task list --project myproject     # project-scoped
-koshi task list --source route          # show only route-created tasks
-koshi task show 3                      # detail + run history
-koshi task run 3                       # manually trigger
+koshi task list                            # all pending tasks
+koshi task list --project myproject        # project-scoped
+koshi task list --status running           # filter by status
+koshi task show 3                          # detail + agent results
+koshi task run 3                           # manually trigger
 ```
 
 ## Live Progress
 
-Sub-agent streaming output is available to the main thread and the user in real time. In the TUI, task progress shows inline in conversation when the agent reports back, or the user can ask "what's happening with task #3?" and the main thread checks the running agent's stream.
+[Sub-agent](./agents.md) streaming output is available to the coordinator and the user in real time. In the TUI, task progress shows inline in conversation when the agent reports back, or the user can ask "what's happening with task #3?" and the coordinator checks the running agent's stream.
 
 Channel plugins can also deliver task notifications — e.g. a Nostr DM when a critical task completes.

@@ -6,6 +6,7 @@ import { compactSession, estimateMessagesChars } from './compaction.js'
 import { cancelJob, createJob, listJobs } from './cron.js'
 import { createLogger } from './logger.js'
 import type { createMemory } from './memory.js'
+import type { createNarrative } from './narrative.js'
 import type { createPromptBuilder } from './prompt.js'
 import type { createRouter } from './router.js'
 import type { createSessionManager } from './sessions.js'
@@ -115,6 +116,7 @@ const MEMORY_TOOLS: Tool[] = [
       properties: {
         content: { type: 'string', description: 'What to remember' },
         tags: { type: 'string', description: 'Comma-separated tags for categorisation' },
+        narrative_id: { type: 'number', description: 'ID of the narrative this memory belongs to (optional)' },
       },
       required: ['content'],
     },
@@ -155,6 +157,49 @@ const MEMORY_TOOLS: Tool[] = [
         tags: { type: 'string', description: 'New comma-separated tags (optional — keeps existing tags if omitted)' },
       },
       required: ['id', 'content'],
+    },
+  },
+]
+
+const NARRATIVE_TOOLS: Tool[] = [
+  {
+    name: 'narrative_update',
+    description:
+      'Create or update a narrative — a short summary of the current conversational thread, linking the memory IDs it references. If id is provided, updates an existing narrative; otherwise creates a new one.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        summary: { type: 'string', description: 'One-sentence summary of the current thread' },
+        memory_ids: {
+          type: 'string',
+          description: 'JSON array of memory IDs referenced, e.g. "[42, 58, 73]"',
+        },
+        previous_narrative_id: {
+          type: 'string',
+          description: 'ID of the previous narrative in the chain (optional)',
+        },
+        topic: { type: 'string', description: 'Topic label (optional)' },
+        id: {
+          type: 'string',
+          description: 'If provided, updates existing narrative; if not, creates new one',
+        },
+      },
+      required: ['summary', 'memory_ids'],
+    },
+  },
+  {
+    name: 'narrative_search',
+    description:
+      'Search narratives. Empty/missing query = latest narrative; numeric = fetch by ID; text = FTS5 keyword search.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        query: {
+          type: 'string',
+          description:
+            'Empty = latest narrative; numeric = fetch by ID; text = FTS5 keyword search',
+        },
+      },
     },
   },
 ]
@@ -253,10 +298,12 @@ const CRON_TOOLS: Tool[] = [
 function executeTool(
   toolCall: ToolCall,
   memory: ReturnType<typeof createMemory>,
+  config: KoshiConfig,
   agentManager?: ReturnType<typeof createAgentManager>,
   router?: ReturnType<typeof createRouter>,
   _batch?: { channel: string; conversation: string },
   _sessionManager?: ReturnType<typeof createSessionManager>,
+  narrative?: ReturnType<typeof createNarrative>,
 ): string {
   const { name, input } = toolCall
 
@@ -314,17 +361,18 @@ function executeTool(
     case 'memory_store': {
       const content = input.content as string
       const tags = (input.tags as string) ?? undefined
-      const id = memory.store(content, 'agent', tags)
+      const narrativeId = input.narrative_id as number | undefined
+      const id = memory.store(content, 'agent', tags, undefined, narrativeId)
       return `Stored memory #${id}`
     }
     case 'memory_reinforce': {
       const id = input.id as number
-      memory.reinforce(id)
+      memory.reinforce(id, config.memory.reinforceWeight)
       return `Reinforced memory #${id}`
     }
     case 'memory_demote': {
       const id = input.id as number
-      memory.demote(id)
+      memory.demote(id, config.memory.demoteWeight)
       return `Demoted memory #${id}`
     }
     case 'memory_update': {
@@ -425,6 +473,35 @@ function executeTool(
         .map((j) => `[${j.id.slice(0, 8)}] ${j.name} — ${j.status} — fires: ${j.schedule_at} (${j.payload_type})`)
         .join('\n')
     }
+    case 'narrative_update': {
+      if (!narrative) return 'Narrative module not available'
+      const summary = input.summary as string
+      let memoryIds: number[]
+      try {
+        memoryIds = JSON.parse(input.memory_ids as string)
+      } catch {
+        return 'Invalid memory_ids — must be a JSON array of numbers, e.g. "[42, 58]"'
+      }
+      const id = input.id as string | undefined
+      if (id) {
+        const result = narrative.update(Number(id), summary, memoryIds)
+        if (!result) return `Narrative #${id} not found.`
+        return JSON.stringify(result)
+      }
+      const previousNarrativeId = input.previous_narrative_id
+        ? Number(input.previous_narrative_id)
+        : undefined
+      const topic = (input.topic as string) ?? undefined
+      const result = narrative.create(summary, memoryIds, previousNarrativeId, topic)
+      return JSON.stringify(result)
+    }
+    case 'narrative_search': {
+      if (!narrative) return 'Narrative module not available'
+      const query = (input.query as string) ?? undefined
+      const results = narrative.search(query)
+      if (results.length === 0) return 'No narratives found.'
+      return JSON.stringify(results)
+    }
     default:
       return `Unknown tool: ${name}`
   }
@@ -439,10 +516,11 @@ export function createMainLoop(opts: {
   sessionManager: ReturnType<typeof createSessionManager>
   promptBuilder: ReturnType<typeof createPromptBuilder>
   memory: ReturnType<typeof createMemory>
+  narrative: ReturnType<typeof createNarrative>
   agentManager: ReturnType<typeof createAgentManager>
   getChannel: (name: string) => ChannelPlugin | undefined
 }) {
-  const { config, router, getModel, sessionManager, promptBuilder, memory, agentManager, getChannel } = opts
+  const { config, router, getModel, sessionManager, promptBuilder, memory, narrative, agentManager, getChannel } = opts
   let timer: ReturnType<typeof setInterval> | null = null
   let processing = false
   let sessionTokensIn = 0
@@ -454,6 +532,25 @@ export function createMainLoop(opts: {
     sessionManager.createSession({ id: MAIN_SESSION_ID, model: config.agent.model, type: 'main' })
   } catch {
     // Already exists — fine
+  }
+
+  // ─── Session Recovery ────────────────────────────────────────────────────────
+  // On session start, load the latest narrative for continuity.
+  // This runs once — the result is cached and injected into every prompt
+  // until the model creates a new narrative mid-session.
+  let narrativeContext: string | undefined
+  try {
+    const latestNarratives = narrative.search()
+    if (latestNarratives.length > 0) {
+      const n = latestNarratives[0]
+      narrativeContext =
+        `## Last Narrative\n${n.summary}\nMemory refs: [${n.memoryIds.join(', ')}]\nNarrative ID: ${n.id}` +
+        (n.previousNarrativeId != null ? `\nPrevious narrative: ${n.previousNarrativeId}` : '') +
+        (n.topic ? `\nTopic: ${n.topic}` : '')
+      log.info('Session recovery: loaded latest narrative', { id: n.id, topic: n.topic ?? null })
+    }
+  } catch (err) {
+    log.warn('Session recovery: failed to load narrative', { error: err instanceof Error ? err.message : String(err) })
   }
 
   async function tick(): Promise<void> {
@@ -529,7 +626,7 @@ export function createMainLoop(opts: {
       // No automatic pre-injection.
 
       // Build system prompt
-      const allTools = [...MAIN_TOOLS, ...MEMORY_TOOLS, ...SKILL_TOOLS, ...CRON_TOOLS]
+      const allTools = [...MAIN_TOOLS, ...MEMORY_TOOLS, ...NARRATIVE_TOOLS, ...SKILL_TOOLS, ...CRON_TOOLS]
 
       // Match skills against user message and auto-load content
       const skillMatches = matchSkills(userContent)
@@ -542,7 +639,7 @@ export function createMainLoop(opts: {
         }
       }
 
-      const systemPrompt = promptBuilder.build({ tools: allTools, skillMatches, loadedSkills })
+      const systemPrompt = promptBuilder.build({ tools: allTools, skillMatches, loadedSkills, narrativeContext })
 
       // Log prompt if debug enabled
       if (config.debug?.logPrompts) {
@@ -609,7 +706,7 @@ export function createMainLoop(opts: {
 
         // Execute each tool and add results
         for (const tc of response.toolCalls) {
-          const result = executeTool(tc, memory, agentManager, router, batch, sessionManager)
+          const result = executeTool(tc, memory, config, agentManager, router, batch, sessionManager, narrative)
           log.info('Tool result', { tool: tc.name, resultLength: result.length })
           modelMessages.push({
             role: 'tool',
@@ -771,7 +868,7 @@ ${recentExchange.slice(0, 2000)}`
 
     /** Execute a tool call — used by the MCP tool API */
     callTool(toolCall: ToolCall): string {
-      return executeTool(toolCall, memory, agentManager, router, undefined, sessionManager)
+      return executeTool(toolCall, memory, config, agentManager, router, undefined, sessionManager, narrative)
     },
   }
 }
